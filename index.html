@@ -668,9 +668,9 @@ function metToShape(j, lat, lon, tz){
   };
 }
 
-async function fetchMetJson(lat, lon){
+async function fetchMetJson(lat, lon, force){
   const la = (+lat).toFixed(4), lo = (+lon).toFixed(4), key = 'met:'+la+','+lo;   // MET는 소수점 4자리까지만 허용
-  try{ const c = JSON.parse(sessionStorage.getItem(key) || 'null'); if(c && Date.now()-c.t < 600000) return c.j; }catch(e){}
+  if(!force){ try{ const c = JSON.parse(sessionStorage.getItem(key) || 'null'); if(c && Date.now()-c.t < 600000) return c.j; }catch(e){} }
   const res = await fetch('https://api.met.no/weatherapi/locationforecast/2.0/complete?lat='+la+'&lon='+lo);
   if(!res.ok) throw new Error('met http '+res.status);
   const j = await res.json();
@@ -679,12 +679,12 @@ async function fetchMetJson(lat, lon){
   return j;
 }
 
-async function fetchWeather(){
+async function fetchWeather(force){
   const loc = state.loc;
   let tz = loc.tz || browserTz();
   try{ new Intl.DateTimeFormat('en',{timeZone:tz}); }catch(e){ tz = browserTz(); }
   try{
-    const j = await fetchMetJson(loc.lat, loc.lon);
+    const j = await fetchMetJson(loc.lat, loc.lon, force);
     const d = metToShape(j, loc.lat, loc.lon, tz); d.provider = 'MET Norway'; return d;
   }catch(e){
     console.warn('MET Norway failed, falling back to Open-Meteo', e);
@@ -748,6 +748,7 @@ async function loadLocation(loc, opts={}){
     await localizeLoc();
     if(opts.save) saveLoc(loc);
     state.data = await fetchWeather();
+    lastWeatherAt = Date.now();
     render();
     updateScene();
   }catch(e){
@@ -1068,7 +1069,9 @@ function buildScene(){
   for(let i=0;i<fn;i++) s.flakes.push({x:Math.random()*W, y:Math.random()*H, r:2+Math.random()*7, v:30+Math.random()*60, sw:Math.random()*6.28, a:.5+Math.random()*.5});
 }
 
-function currentMin(){ return scene.clock + (performance.now() - scene.clockAt)/60000; }
+/* 배경의 시각은 내 컴퓨터(기기)의 현재 시간을 그대로 따라갑니다. (weather.html?hour=18 미리보기는 그 시각에서 흘러감) */
+function deviceMin(){ const n = new Date(); return n.getHours()*60 + n.getMinutes() + n.getSeconds()/60; }
+function currentMin(){ return scene.fixedClock ? scene.clock + (performance.now() - scene.clockAt)/60000 : deviceMin(); }
 function updateSun(){
   const s = scene;
   if(!s.validSun){ s.alt = s.night ? -.8 : .8; s.sunP = .5; s.moonQ = .5; return; }
@@ -1090,15 +1093,18 @@ function refreshTint(){
   scene.clouds.forEach((c,i)=>{ c.sp = scene.sprites[i%3]; });
 }
 
-function updateScene(){
+function sceneSig(){ const s = scene; return [s.theme, s.rain, s.snow, s.thunder, Math.round(s.cover/20), Math.round(s.wind/10)].join('|'); }
+function updateScene(soft){
   const d = state.data; if(!d) return;
+  const prevSig = sceneSig();
   const c = d.current, dy = d.daily, idx = codeIndex(c.weather_code);
   const mins = s => { const t = s.split('T')[1].split(':'); return (+t[0])*60 + (+t[1]); };
   const hp = new URLSearchParams(location.search).get('hour'); // 미리보기: weather.html?hour=18
   const rise = mins(dy.sunrise[0]), set = mins(dy.sunset[0]);
   Object.assign(scene, {
     rise, set, validSun: set > rise,
-    clock: (hp !== null && hp !== '' && !isNaN(+hp)) ? (+hp)*60 : mins(c.time),
+    fixedClock: (hp !== null && hp !== '' && !isNaN(+hp)),
+    clock: (hp !== null && hp !== '' && !isNaN(+hp)) ? (+hp)*60 : deviceMin(),
     clockAt: performance.now(),
     night: !c.is_day,
     cover: c.cloud_cover || 0,
@@ -1109,11 +1115,34 @@ function updateScene(){
   });
   updateSun();
   if(!weatherPreviewActive) scene.theme = codeTheme(c.weather_code, !scene.night);
+  if(soft){
+    // 자동 갱신: 날씨 종류가 바뀐 경우에만 장면을 다시 만들고, 아니면 구름·비·눈이 끊기지 않게 그대로 둡니다.
+    if(sceneSig() !== prevSig){ buildScene(); applyVideo(scene.theme); }
+    return;
+  }
   bg.style.opacity = '0';
   buildScene();
   applyVideo(scene.theme);
   requestAnimationFrame(()=>{ bg.style.opacity = '1'; });
 }
+
+/* ---------- 실시간 자동 갱신 ----------
+   시간(해·달 위치, 하늘색)은 1초마다 계산되고, 날씨 데이터는 10분마다·탭으로 돌아올 때 새로 받아 배경에 반영합니다. */
+let lastWeatherAt = Date.now(), refreshing = false;
+async function refreshWeather(){
+  if(refreshing || !state.loc || !state.data) return;
+  refreshing = true;
+  try{
+    const d = await fetchWeather(true);
+    state.data = d; lastWeatherAt = Date.now();
+    render();
+    updateScene(true);
+  }catch(e){ console.warn('Auto refresh failed', e); }
+  finally{ refreshing = false; }
+}
+setInterval(()=>{ if(!document.hidden && Date.now() - lastWeatherAt >= 600000) refreshWeather(); }, 60000);
+document.addEventListener('visibilitychange', ()=>{ if(!document.hidden && Date.now() - lastWeatherAt >= 300000) refreshWeather(); });
+window.addEventListener('online', ()=>{ refreshWeather(); });
 
 function applyVideo(theme){
   const src = VIDEO_SOURCES[theme];
