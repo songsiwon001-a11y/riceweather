@@ -1,0 +1,1118 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Weather</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@300;400;500;600;700&family=Noto+Sans+KR:wght@300;400;500;700&family=Noto+Sans+JP:wght@300;400;500;700&family=Noto+Sans+SC:wght@300;400;500;700&family=Noto+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root { --fg:#fff; --card:rgba(255,255,255,.14); --line:rgba(255,255,255,.22); }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body {
+    min-height:100vh; color:var(--fg);
+    font-family:"Figtree","Noto Sans KR","Noto Sans JP","Noto Sans SC","Noto Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    background:linear-gradient(160deg,#4a90e2,#1c3f78); background-attachment:fixed;
+    transition:background .6s;
+  }
+  body.clear-day{background:linear-gradient(160deg,#4facfe,#1e6fd0)}
+  body.clear-night{background:linear-gradient(160deg,#1b2a52,#0a1022)}
+  body.cloudy{background:linear-gradient(160deg,#7b8a9a,#445063)}
+  body.rain{background:linear-gradient(160deg,#52657c,#26303f)}
+  body.snow{background:linear-gradient(160deg,#9db7d1,#5d7690)}
+  body.storm{background:linear-gradient(160deg,#4a4060,#1a1826)}
+  .wrap{max-width:860px;margin:0 auto;padding:20px 16px 40px;position:relative}
+  #bg,#bgVideo{position:fixed;inset:0;width:100%;height:100%;z-index:-3}
+  #bg{opacity:0;transition:opacity .9s ease}
+  #bgVideo{object-fit:cover;display:none}
+  #scrim{position:fixed;inset:0;z-index:-2;pointer-events:none;background:linear-gradient(rgba(0,0,0,.10),rgba(0,0,0,.30))}
+  .card,.top,.note,.status{text-shadow:0 1px 8px rgba(0,0,0,.28)}
+  .card{backdrop-filter:blur(14px) saturate(1.2);-webkit-backdrop-filter:blur(14px) saturate(1.2)}
+  .top{display:flex;gap:10px;align-items:center;margin-bottom:20px;position:relative}
+  .search{flex:1;min-width:0;position:relative}
+  .search svg{position:absolute;left:18px;top:50%;transform:translateY(-50%);width:18px;height:18px;opacity:.85;pointer-events:none}
+  input,select,button{
+    height:48px;font:inherit;font-size:.98rem;color:var(--fg);background:var(--card);border:0;
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.18);
+    border-radius:999px;padding:0 20px;outline:none;
+    backdrop-filter:blur(14px) saturate(1.2);-webkit-backdrop-filter:blur(14px) saturate(1.2);
+    transition:background .2s, box-shadow .2s;
+  }
+  input{width:100%;padding-left:46px}
+  input::placeholder{color:rgba(255,255,255,.72)}
+  input:focus,select:focus-visible,button:focus-visible{box-shadow:inset 0 0 0 1.5px rgba(255,255,255,.75)}
+  select{
+    appearance:none;-webkit-appearance:none;cursor:pointer;padding-right:42px;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><path d='m6 9 6 6 6-6'/></svg>");
+    background-repeat:no-repeat;background-position:right 18px center;background-size:14px;
+  }
+  select option{color:#111}
+  button{cursor:pointer;display:inline-flex;align-items:center;gap:8px;white-space:nowrap;font-weight:500}
+  button svg{width:18px;height:18px;flex:none}
+  button:hover,select:hover{background-color:rgba(255,255,255,.24)}
+  button:active{transform:scale(.97)}
+  .results{
+    position:absolute;top:100%;left:0;right:0;margin-top:8px;z-index:10;
+    background:rgba(20,30,50,.95);border:0;border-radius:24px;overflow:hidden;display:none;
+  }
+  .results div{padding:10px 12px;cursor:pointer;font-size:.95rem}
+  .results div:hover{background:rgba(255,255,255,.14)}
+  .results small{opacity:.7}
+  .card{background:var(--card);border:0;border-radius:30px;padding:24px;margin-bottom:14px}
+  .hero{text-align:center}
+  .place{font-size:1.4rem;font-weight:600;letter-spacing:-.01em}
+  .sub{opacity:.8;font-size:.9rem;margin-top:2px}
+  .icon{font-size:5rem;line-height:1.1;margin-top:8px}
+  .temps{display:flex;justify-content:center;align-items:baseline;gap:18px;flex-wrap:wrap;margin-top:4px}
+  .tp{font-size:5.6rem;font-weight:300;letter-spacing:-.045em;line-height:1}
+  .ts{font-size:2rem;font-weight:300;opacity:.8}
+  .desc{font-size:1.3rem;margin-top:4px}
+  .hl{opacity:.85;margin-top:6px;font-size:.95rem}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+  .stat{background:rgba(255,255,255,.1);border-radius:22px;padding:14px 16px}
+  .stat .k{font-size:.8rem;opacity:.75}
+  .stat .v{font-size:1.15rem;margin-top:4px;font-weight:500}
+  .stat .v small{opacity:.75;font-weight:400;font-size:.8rem}
+  h2{font-size:1rem;opacity:.9;margin-bottom:14px;font-weight:600;letter-spacing:-.01em}
+  .hourly{display:flex;gap:10px;overflow-x:auto;padding-bottom:6px}
+  .hr{flex:0 0 auto;min-width:78px;text-align:center;background:rgba(255,255,255,.1);border-radius:26px;padding:14px 8px}
+  .hr .t{font-size:.8rem;opacity:.8}
+  .hr .i{font-size:1.6rem;margin:4px 0}
+  .hr .c{font-weight:600}
+  .hr .f{font-size:.75rem;opacity:.75}
+  .hr .p{font-size:.75rem;margin-top:4px;color:#bfe3ff}
+  .day{display:grid;grid-template-columns:70px 36px 1fr auto;gap:10px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
+  .day:first-of-type{border-top:0}
+  .day .n{font-weight:500}
+  .day .i{font-size:1.5rem;text-align:center}
+  .day .d{font-size:.85rem;opacity:.85}
+  .day .r{text-align:right;font-size:.9rem;white-space:nowrap}
+  .day .r small{opacity:.75}
+  .status{text-align:center;padding:40px 0;opacity:.9}
+  .note{text-align:center;font-size:.85rem;opacity:.8;margin-bottom:12px}
+  footer{text-align:center;font-size:.75rem;opacity:.65;margin-top:20px}
+  @media (max-width:520px){
+    .tp{font-size:4rem}.ts{font-size:1.5rem}
+    .top{flex-wrap:wrap}.search{flex:1 1 100%}
+    #locBtn{flex:1;justify-content:center}#langSel{flex:1}
+    .day{grid-template-columns:56px 30px 1fr;}
+    .day .r{grid-column:1 / -1;text-align:left}
+  }
+</style>
+</head>
+<body>
+<video id="bgVideo" muted loop playsinline autoplay preload="auto"></video>
+<canvas id="bg"></canvas>
+<div id="scrim"></div>
+<div class="wrap">
+  <div class="top">
+    <div class="search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="q" type="search" autocomplete="off">
+      <div class="results" id="results"></div>
+    </div>
+    <button id="locBtn"></button>
+    <select id="langSel"></select>
+  </div>
+  <div id="note" class="note"></div>
+  <div id="app"><div class="status" id="status"></div></div>
+  <footer id="foot">정보제공: MET Norway · Geocoding: Open-Meteo, BigDataCloud</footer>
+</div>
+
+<script>
+/* ---------- i18n ---------- */
+const DESC_KEYS = ['clear','mostlyClear','partly','overcast','fog','drizzle','fzDrizzle','rainL','rain','rainH','fzRain','snowL','snow','snowH','grains','showers','showersH','snowSh','thunder','hail'];
+
+const I18N = {
+  ko:{name:'한국어',locale:'ko-KR',search:'도시 검색...',myLoc:'내 위치',auto:'자동',loading:'날씨를 불러오는 중...',locating:'위치 확인 중...',
+    fallback:'위치 정보를 가져올 수 없어 기본 위치(서울)를 표시합니다.',error:'날씨 정보를 불러오지 못했습니다.',noResult:'검색 결과 없음',
+    feels:'체감',humidity:'습도',wind:'바람',pressure:'기압',precip:'강수량',chance:'강수확률',uv:'자외선 지수',clouds:'구름',sunrise:'일출',sunset:'일몰',
+    hourly:'시간별 예보 (24시간)',daily:'7일 예보',today:'오늘',high:'최고',low:'최저',now:'지금',updated:'기준',
+    desc:['맑음','대체로 맑음','구름 조금','흐림','안개','이슬비','어는 이슬비','약한 비','비','강한 비','어는 비','약한 눈','눈','강한 눈','싸락눈','소나기','강한 소나기','눈 소나기','뇌우','우박을 동반한 뇌우']},
+  en:{name:'English',locale:'en-US',search:'Search city...',myLoc:'My location',auto:'Auto',loading:'Loading weather...',locating:'Finding your location...',
+    fallback:'Could not get your location. Showing default (Seoul).',error:'Failed to load weather data.',noResult:'No results',
+    feels:'Feels like',humidity:'Humidity',wind:'Wind',pressure:'Pressure',precip:'Precipitation',chance:'Chance of rain',uv:'UV index',clouds:'Cloud cover',sunrise:'Sunrise',sunset:'Sunset',
+    hourly:'Hourly (24h)',daily:'7-day forecast',today:'Today',high:'H',low:'L',now:'Now',updated:'Updated',
+    desc:['Clear','Mostly clear','Partly cloudy','Overcast','Fog','Light drizzle','Freezing drizzle','Light rain','Rain','Heavy rain','Freezing rain','Light snow','Snow','Heavy snow','Snow grains','Rain showers','Heavy showers','Snow showers','Thunderstorm','Thunderstorm with hail']},
+  ja:{name:'日本語',locale:'ja-JP',search:'都市を検索...',myLoc:'現在地',auto:'自動',loading:'天気を読み込み中...',locating:'位置を確認中...',
+    fallback:'位置情報を取得できないため、既定の場所(ソウル)を表示します。',error:'天気情報を取得できませんでした。',noResult:'結果なし',
+    feels:'体感',humidity:'湿度',wind:'風',pressure:'気圧',precip:'降水量',chance:'降水確率',uv:'紫外線指数',clouds:'雲量',sunrise:'日の出',sunset:'日の入り',
+    hourly:'時間別予報 (24時間)',daily:'7日間予報',today:'今日',high:'最高',low:'最低',now:'今',updated:'更新',
+    desc:['快晴','晴れ','晴れ時々曇り','曇り','霧','弱い霧雨','着氷性の霧雨','弱い雨','雨','強い雨','着氷性の雨','弱い雪','雪','強い雪','雪あられ','にわか雨','強いにわか雨','にわか雪','雷雨','ひょうを伴う雷雨']},
+  zh:{name:'中文',locale:'zh-CN',search:'搜索城市...',myLoc:'我的位置',auto:'自动',loading:'正在加载天气...',locating:'正在定位...',
+    fallback:'无法获取位置,显示默认位置(首尔)。',error:'无法加载天气数据。',noResult:'无结果',
+    feels:'体感',humidity:'湿度',wind:'风',pressure:'气压',precip:'降水量',chance:'降水概率',uv:'紫外线指数',clouds:'云量',sunrise:'日出',sunset:'日落',
+    hourly:'逐小时预报 (24小时)',daily:'7天预报',today:'今天',high:'高',low:'低',now:'现在',updated:'更新于',
+    desc:['晴','大部晴朗','局部多云','阴','雾','小毛毛雨','冻毛毛雨','小雨','雨','大雨','冻雨','小雪','雪','大雪','米雪','阵雨','强阵雨','阵雪','雷暴','雷暴伴冰雹']},
+  es:{name:'Español',locale:'es-ES',search:'Buscar ciudad...',myLoc:'Mi ubicación',auto:'Auto',loading:'Cargando el tiempo...',locating:'Buscando tu ubicación...',
+    fallback:'No se pudo obtener tu ubicación. Mostrando Seúl por defecto.',error:'No se pudo cargar el tiempo.',noResult:'Sin resultados',
+    feels:'Sensación',humidity:'Humedad',wind:'Viento',pressure:'Presión',precip:'Precipitación',chance:'Prob. de lluvia',uv:'Índice UV',clouds:'Nubosidad',sunrise:'Amanecer',sunset:'Atardecer',
+    hourly:'Por horas (24 h)',daily:'Pronóstico de 7 días',today:'Hoy',high:'Máx',low:'Mín',now:'Ahora',updated:'Actualizado',
+    desc:['Despejado','Mayormente despejado','Parcialmente nublado','Nublado','Niebla','Llovizna ligera','Llovizna helada','Lluvia ligera','Lluvia','Lluvia fuerte','Lluvia helada','Nieve ligera','Nieve','Nieve fuerte','Granos de nieve','Chubascos','Chubascos fuertes','Chubascos de nieve','Tormenta','Tormenta con granizo']},
+  fr:{name:'Français',locale:'fr-FR',search:'Rechercher une ville...',myLoc:'Ma position',auto:'Auto',loading:'Chargement de la météo...',locating:'Localisation en cours...',
+    fallback:'Position introuvable. Affichage par défaut (Séoul).',error:'Impossible de charger la météo.',noResult:'Aucun résultat',
+    feels:'Ressenti',humidity:'Humidité',wind:'Vent',pressure:'Pression',precip:'Précipitations',chance:'Risque de pluie',uv:'Indice UV',clouds:'Nébulosité',sunrise:'Lever',sunset:'Coucher',
+    hourly:'Heure par heure (24 h)',daily:'Prévisions sur 7 jours',today:"Aujourd'hui",high:'Max',low:'Min',now:'Maint.',updated:'Mis à jour',
+    desc:['Dégagé','Plutôt dégagé','Partiellement nuageux','Couvert','Brouillard','Bruine légère','Bruine verglaçante','Pluie légère','Pluie','Forte pluie','Pluie verglaçante','Neige légère','Neige','Forte neige','Grains de neige','Averses','Fortes averses','Averses de neige','Orage','Orage avec grêle']},
+  de:{name:'Deutsch',locale:'de-DE',search:'Stadt suchen...',myLoc:'Mein Standort',auto:'Auto',loading:'Wetter wird geladen...',locating:'Standort wird ermittelt...',
+    fallback:'Standort nicht verfügbar. Standardort (Seoul) wird angezeigt.',error:'Wetterdaten konnten nicht geladen werden.',noResult:'Keine Ergebnisse',
+    feels:'Gefühlt',humidity:'Luftfeuchte',wind:'Wind',pressure:'Luftdruck',precip:'Niederschlag',chance:'Regenwahrsch.',uv:'UV-Index',clouds:'Bewölkung',sunrise:'Sonnenaufgang',sunset:'Sonnenuntergang',
+    hourly:'Stündlich (24 Std.)',daily:'7-Tage-Vorhersage',today:'Heute',high:'Max',low:'Min',now:'Jetzt',updated:'Stand',
+    desc:['Klar','Überwiegend klar','Teils bewölkt','Bedeckt','Nebel','Leichter Nieselregen','Gefrierender Nieselregen','Leichter Regen','Regen','Starker Regen','Gefrierender Regen','Leichter Schneefall','Schnee','Starker Schneefall','Schneegriesel','Schauer','Starke Schauer','Schneeschauer','Gewitter','Gewitter mit Hagel']},
+  pt:{name:'Português',locale:'pt-BR',search:'Buscar cidade...',myLoc:'Minha localização',auto:'Auto',loading:'Carregando o clima...',locating:'Localizando...',
+    fallback:'Não foi possível obter sua localização. Exibindo Seul por padrão.',error:'Falha ao carregar o clima.',noResult:'Sem resultados',
+    feels:'Sensação',humidity:'Umidade',wind:'Vento',pressure:'Pressão',precip:'Precipitação',chance:'Chance de chuva',uv:'Índice UV',clouds:'Nuvens',sunrise:'Nascer do sol',sunset:'Pôr do sol',
+    hourly:'Por hora (24 h)',daily:'Previsão de 7 dias',today:'Hoje',high:'Máx',low:'Mín',now:'Agora',updated:'Atualizado',
+    desc:['Céu limpo','Predomínio de sol','Parcialmente nublado','Nublado','Neblina','Garoa leve','Garoa congelante','Chuva fraca','Chuva','Chuva forte','Chuva congelante','Neve fraca','Neve','Neve forte','Grãos de neve','Pancadas de chuva','Pancadas fortes','Pancadas de neve','Tempestade','Tempestade com granizo']},
+  ru:{name:'Русский',locale:'ru-RU',search:'Поиск города...',myLoc:'Моё местоположение',auto:'Авто',loading:'Загрузка погоды...',locating:'Определение местоположения...',
+    fallback:'Не удалось определить местоположение. Показан Сеул по умолчанию.',error:'Не удалось загрузить погоду.',noResult:'Нет результатов',
+    feels:'Ощущается',humidity:'Влажность',wind:'Ветер',pressure:'Давление',precip:'Осадки',chance:'Вер. осадков',uv:'УФ-индекс',clouds:'Облачность',sunrise:'Восход',sunset:'Закат',
+    hourly:'По часам (24 ч)',daily:'Прогноз на 7 дней',today:'Сегодня',high:'Макс',low:'Мин',now:'Сейчас',updated:'Обновлено',
+    desc:['Ясно','Преимущественно ясно','Переменная облачность','Пасмурно','Туман','Лёгкая морось','Ледяная морось','Небольшой дождь','Дождь','Сильный дождь','Ледяной дождь','Небольшой снег','Снег','Сильный снег','Снежные зёрна','Ливень','Сильный ливень','Снегопад','Гроза','Гроза с градом']}
+};
+
+const COUNTRY_LANG = {
+  KR:'ko', KP:'ko',
+  JP:'ja',
+  CN:'zh', TW:'zh', HK:'zh', MO:'zh', SG:'zh',
+  ES:'es', MX:'es', AR:'es', CO:'es', CL:'es', PE:'es', VE:'es', EC:'es', UY:'es', PY:'es', BO:'es', CR:'es', PA:'es', GT:'es', HN:'es', SV:'es', NI:'es', DO:'es', CU:'es', PR:'es',
+  FR:'fr', BE:'fr', LU:'fr', MC:'fr', SN:'fr', CI:'fr', CM:'fr', CD:'fr', MG:'fr', HT:'fr',
+  DE:'de', AT:'de', CH:'de', LI:'de',
+  BR:'pt', PT:'pt', AO:'pt', MZ:'pt',
+  RU:'ru', BY:'ru', KZ:'ru', KG:'ru'
+};
+
+/* ---------- state ---------- */
+const DEFAULT_LOC = { lat:37.5665, lon:126.978, name:'서울', admin:'', country:'KR', tz:'Asia/Seoul' };
+let state = { loc:null, lang:'ko', manualLang:null, data:null };
+const $ = id => document.getElementById(id);
+
+function safeGet(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
+function safeSet(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
+
+function langForCountry(cc){ return COUNTRY_LANG[(cc||'').toUpperCase()] || 'en'; }
+function activeLang(){ return state.manualLang || state.lang; }
+const L = () => I18N[activeLang()];
+
+/* ---------- unit helpers ---------- */
+const cToF = c => c * 9/5 + 32;
+const r0 = n => Math.round(n);
+const r1 = n => Math.round(n*10)/10;
+const kmhToMph = k => k * 0.621371;
+const mmToIn = m => m / 25.4;
+const hPaToInHg = h => h * 0.02953;
+/* 화씨를 주로 쓰는 나라는 화씨를 크게, 그 외는 섭씨를 크게 */
+const F_COUNTRIES = ['US','PR','GU','VI','AS','MP','BS','BZ','KY','LR','PW','FM','MH'];
+function primaryIsF(){
+  const cc = ((state.loc && state.loc.country) || '').toUpperCase();
+  if(cc) return F_COUNTRIES.includes(cc);
+  const m = (navigator.language || '').split('-')[1];
+  return !!m && F_COUNTRIES.includes(m.toUpperCase());
+}
+function tp(c){
+  const C = `${r0(c)}°C`, F = `${r0(cToF(c))}°F`;
+  return primaryIsF() ? {main:F, sub:C} : {main:C, sub:F};
+}
+function dual(c){ const t = tp(c); return `${t.main} / ${t.sub}`; }
+function hiLo(hi, lo){
+  const F = primaryIsF();
+  const a = F?cToF(hi):hi, b = F?cToF(lo):lo, a2 = F?hi:cToF(hi), b2 = F?lo:cToF(lo);
+  const u1 = F?'°F':'°C', u2 = F?'°C':'°F';
+  return { main:`${r0(a)}° / ${r0(b)}${u1}`, sub:`${r0(a2)}° / ${r0(b2)}${u2}` };
+}
+
+function degToDir(d){
+  const dirs=['N','NE','E','SE','S','SW','W','NW'];
+  return dirs[Math.round(d/45)%8];
+}
+
+/* ---------- weather code ---------- */
+function codeIndex(code){
+  if(code===0) return 0; if(code===1) return 1; if(code===2) return 2; if(code===3) return 3;
+  if(code===45||code===48) return 4;
+  if([51,53,55].includes(code)) return 5;
+  if([56,57].includes(code)) return 6;
+  if(code===61) return 7; if(code===63) return 8; if(code===65) return 9;
+  if([66,67].includes(code)) return 10;
+  if(code===71) return 11; if(code===73) return 12; if(code===75) return 13; if(code===77) return 14;
+  if([80,81].includes(code)) return 15; if(code===82) return 16;
+  if([85,86].includes(code)) return 17;
+  if(code===95) return 18;
+  if([96,99].includes(code)) return 19;
+  return 3;
+}
+function codeIcon(code, isDay=1){
+  const i = codeIndex(code);
+  if(i<=1) return isDay ? '☀️' : '🌙';
+  if(i===2) return isDay ? '⛅' : '☁️';
+  if(i===3) return '☁️';
+  if(i===4) return '🌫️';
+  if(i<=6) return '🌦️';
+  if(i<=10) return '🌧️';
+  if(i<=14) return '❄️';
+  if(i<=16) return '🌦️';
+  if(i===17) return '🌨️';
+  return '⛈️';
+}
+function codeTheme(code, isDay){
+  const i = codeIndex(code);
+  if(i<=2) return isDay ? 'clear-day' : 'clear-night';
+  if(i===4) return 'fog';
+  if(i===3) return 'cloudy';
+  if(i<=10 || i===15 || i===16) return 'rain';
+  if(i<=14 || i===17) return 'snow';
+  return 'storm';
+}
+
+/* ---------- Console weather background preview (Korean) ----------
+   개발자 도구 콘솔에서 미리보기날씨('비') 처럼 입력하면 배경을 미리 볼 수 있습니다.
+   미리보기날씨('원래대로') 또는 미리보기날씨()를 입력하면 실제 날씨 배경으로 복원합니다.
+*/
+const WEATHER_PREVIEW_THEMES = {
+  '맑음':'clear-day', '맑은 낮':'clear-day', '맑은 밤':'clear-night', '밤':'clear-night',
+  '흐림':'cloudy', '구름':'cloudy', '구름 많음':'cloudy', '안개':'fog',
+  '비':'rain', '비옴':'rain', '비 오는 날':'rain', '소나기':'rain', '이슬비':'rain',
+  '눈':'snow', '눈옴':'snow', '눈 오는 날':'snow', '폭설':'snow',
+  '천둥':'storm', '번개':'storm', '뇌우':'storm', '폭풍':'storm', '폭풍우':'storm'
+};
+let weatherPreviewActive = false;
+function previewWeatherBackground(weatherName){
+  const name = String(weatherName ?? '').trim();
+  if(!name || ['원래대로','복원','취소','실제 날씨'].includes(name)){
+    weatherPreviewActive = false;
+    if(state.data?.current) {
+      document.body.className = codeTheme(state.data.current.weather_code, state.data.current.is_day);
+      scene.theme = codeTheme(state.data.current.weather_code, !scene.night);
+      applyVideo(scene.theme);
+    }
+    console.info('날씨 배경 미리보기를 종료하고 실제 날씨 배경으로 복원했습니다.');
+    return;
+  }
+  const theme = WEATHER_PREVIEW_THEMES[name];
+  if(!theme){
+    console.warn('지원하지 않는 날씨 이름입니다. 사용 가능:', Object.keys(WEATHER_PREVIEW_THEMES).join(', '));
+    return;
+  }
+  weatherPreviewActive = true;
+  document.body.className = theme;
+  scene.theme = theme;
+  bg.style.opacity = '1';
+  applyVideo(theme);
+  console.info(`날씨 배경 미리보기: ${name} (${theme})`);
+}
+window.미리보기날씨 = previewWeatherBackground;
+window.weatherPreview = previewWeatherBackground;
+const descOf = code => L().desc[codeIndex(code)];
+
+/* ---------- UI text ---------- */
+function applyStaticText(){
+  const t = L();
+  document.documentElement.lang = activeLang();
+  $('q').placeholder = t.search;
+  $('locBtn').innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-5.5-7-11a7 7 0 0 1 14 0c0 5.5-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/></svg><span>' + t.myLoc + '</span>';
+  const sel = $('langSel');
+  const cur = state.manualLang || 'auto';
+  sel.innerHTML = `<option value="auto">🌐 ${t.auto}</option>` +
+    Object.keys(I18N).map(k=>`<option value="${k}">${I18N[k].name}</option>`).join('');
+  sel.value = cur;
+}
+
+/* ---------- date helpers (string based, location-local) ---------- */
+function parseLocal(s){ // "YYYY-MM-DDTHH:mm" or "YYYY-MM-DD"
+  const [d,t='00:00'] = s.split('T');
+  const [y,m,dd] = d.split('-').map(Number);
+  const [h,mi] = t.split(':').map(Number);
+  return new Date(Date.UTC(y,m-1,dd,h,mi));
+}
+function fmtDay(s){
+  return new Intl.DateTimeFormat(L().locale,{weekday:'short',month:'short',day:'numeric',timeZone:'UTC'}).format(parseLocal(s));
+}
+function fmtTime(s){
+  return new Intl.DateTimeFormat(L().locale,{hour:'numeric',minute:'2-digit',timeZone:'UTC'}).format(parseLocal(s));
+}
+function fmtHour(s){
+  return new Intl.DateTimeFormat(L().locale,{hour:'numeric',timeZone:'UTC'}).format(parseLocal(s));
+}
+
+/* ---------- rendering ---------- */
+function render(){
+  const t = L(); const d = state.data; if(!d) return;
+  const c = d.current, h = d.hourly, dy = d.daily;
+  const loc = state.loc;
+
+  if(!weatherPreviewActive) document.body.className = codeTheme(c.weather_code, c.is_day);
+
+  const title = [loc.name, loc.admin, loc.country].filter(Boolean).join(', ');
+  const todayHi = dy.temperature_2m_max[0], todayLo = dy.temperature_2m_min[0];
+
+  // hourly: next 24 hours
+  const nowKey = c.time.slice(0,13)+':00';
+  let start = h.time.findIndex(x => x >= nowKey); if(start<0) start = 0;
+  let hourlyHtml = '';
+  for(let i=start;i<start+24 && i<h.time.length;i++){
+    const hr = parseLocal(h.time[i]).getUTCHours();
+    const isDay = hr>=6 && hr<19 ? 1 : 0;
+    hourlyHtml += `<div class="hr">
+      <div class="t">${i===start ? t.now : fmtHour(h.time[i])}</div>
+      <div class="i">${codeIcon(h.weather_code[i], isDay)}</div>
+      <div class="c">${tp(h.temperature_2m[i]).main}</div>
+      <div class="f">${tp(h.temperature_2m[i]).sub}</div>
+      <div class="p">💧${r1(h.precipitation[i] ?? 0)}mm</div>
+    </div>`;
+  }
+
+  let dailyHtml = '';
+  for(let i=0;i<dy.time.length;i++){
+    const ps = dy.precipitation_sum[i] ?? 0;
+    dailyHtml += `<div class="day">
+      <div class="n">${i===0 ? t.today : fmtDay(dy.time[i])}</div>
+      <div class="i">${codeIcon(dy.weather_code[i],1)}</div>
+      <div class="d">${descOf(dy.weather_code[i])}<br>💧 ${r1(ps)} mm / ${Math.round(mmToIn(ps)*100)/100} in</div>
+      <div class="r">${hiLo(dy.temperature_2m_max[i], dy.temperature_2m_min[i]).main}<br><small>${hiLo(dy.temperature_2m_max[i], dy.temperature_2m_min[i]).sub}</small></div>
+    </div>`;
+  }
+
+  const prec = c.precipitation ?? 0;
+  const dirTxt = c.wind_direction_10m!=null ? ' ' + degToDir(c.wind_direction_10m) : '';
+
+  $('app').innerHTML = `
+    <div class="card hero">
+      <div class="place">${escapeHtml(title)}</div>
+      <div class="sub">${t.updated}: ${fmtDay(c.time)} ${fmtTime(c.time)}</div>
+      <div class="icon">${codeIcon(c.weather_code, c.is_day)}</div>
+      <div class="temps"><span class="tp">${tp(c.temperature_2m).main}</span><span class="ts">${tp(c.temperature_2m).sub}</span></div>
+      <div class="desc">${descOf(c.weather_code)}</div>
+      <div class="hl">${t.high} ${dual(todayHi)} &nbsp;·&nbsp; ${t.low} ${dual(todayLo)}</div>
+    </div>
+
+    <div class="card">
+      <div class="grid">
+        <div class="stat"><div class="k">${t.feels}</div><div class="v">${dual(c.apparent_temperature)}</div></div>
+        <div class="stat"><div class="k">${t.humidity}</div><div class="v">${c.relative_humidity_2m}%</div></div>
+        <div class="stat"><div class="k">${t.now} ${t.precip}</div><div class="v">${r1(prec)} mm <small>/ ${(Math.round(mmToIn(prec)*100)/100)} in</small></div></div>
+        <div class="stat"><div class="k">${t.today} ${t.precip}</div><div class="v">${r1(dy.precipitation_sum[0] ?? 0)} mm <small>/ ${Math.round(mmToIn(dy.precipitation_sum[0] ?? 0)*100)/100} in</small></div></div>
+        <div class="stat"><div class="k">${t.wind}</div><div class="v">${r0(c.wind_speed_10m)} km/h <small>/ ${r0(kmhToMph(c.wind_speed_10m))} mph${dirTxt}</small></div></div>
+        <div class="stat"><div class="k">${t.pressure}</div><div class="v">${r0(c.pressure_msl)} hPa <small>/ ${r1(hPaToInHg(c.pressure_msl))} inHg</small></div></div>
+        <div class="stat"><div class="k">${t.clouds}</div><div class="v">${c.cloud_cover}%</div></div>
+        <div class="stat"><div class="k">${t.uv}</div><div class="v">${r1(dy.uv_index_max[0] ?? 0)}</div></div>
+        <div class="stat"><div class="k">🌅 ${t.sunrise}</div><div class="v">${fmtTime(dy.sunrise[0])}</div></div>
+        <div class="stat"><div class="k">🌇 ${t.sunset}</div><div class="v">${fmtTime(dy.sunset[0])}</div></div>
+      </div>
+    </div>
+
+    <div class="card"><h2>${t.hourly}</h2><div class="hourly">${hourlyHtml}</div></div>
+    <div class="card"><h2>${t.daily}</h2>${dailyHtml}</div>
+  `;
+  const footerLabels = {
+    ko: '정보제공', en: 'Weather data', ja: '情報提供', zh: '信息提供',
+    es: 'Información meteorológica', fr: 'Informations météo', de: 'Wetterdaten', pt: 'Dados meteorológicos', ru: 'Данные о погоде'
+  };
+  const footerLabel = footerLabels[activeLang()] || footerLabels.en;
+  $('foot').textContent = footerLabel + ': ' + (d.provider || 'MET Norway') + ' · Geocoding: Open-Meteo, BigDataCloud';
+}
+
+function escapeHtml(s){ return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+function setStatus(msg){ $('app').innerHTML = `<div class="status">${escapeHtml(msg)}</div>`; }
+function setNote(msg){ $('note').textContent = msg || ''; }
+
+/* ---------- data ---------- */
+/* 날씨: MET Norway Locationforecast (API 키 불필요, 일일 호출 제한 없음).
+   실패하면 Open-Meteo로 자동 전환합니다. 일출/일몰·체감온도 등은 브라우저에서 직접 계산/변환합니다. */
+function browserTz(){ try{ return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; }catch(e){ return 'UTC'; } }
+
+function localParts(ms, tz){
+  const f = new Intl.DateTimeFormat('en-CA',{timeZone:tz,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'});
+  const o = {}; for(const p of f.formatToParts(new Date(ms))) o[p.type] = p.value;
+  if(o.hour === '24') o.hour = '00';
+  return o;
+}
+function localISO(ms, tz){ const o = localParts(ms,tz); return `${o.year}-${o.month}-${o.day}T${o.hour}:${o.minute}`; }
+function tzOffsetMs(ms, tz){
+  const o = localParts(ms,tz);
+  return Date.UTC(+o.year, +o.month-1, +o.day, +o.hour, +o.minute) - Math.floor(ms/60000)*60000;
+}
+function localToMs(ymd, hh, mm, tz){
+  const [y,m,d] = ymd.split('-').map(Number);
+  const base = Date.UTC(y,m-1,d,hh,mm); let g = base;
+  for(let i=0;i<2;i++) g = base - tzOffsetMs(g,tz);
+  return g;
+}
+function addDays(ymd, k){
+  const [y,m,d] = ymd.split('-').map(Number);
+  return new Date(Date.UTC(y,m-1,d+k)).toISOString().slice(0,10);
+}
+
+/* 일출/일몰: 태양 위치 공식(NOAA 근사). noonMs = 그 지역 정오의 시각(ms) */
+function sunTimes(lat, lon, noonMs){
+  const rad = Math.PI/180, n = (noonMs - 946728000000)/86400000;
+  const L = (((280.460 + 0.9856474*n) % 360) + 360) % 360;
+  const g = (357.528 + 0.9856003*n) * rad;
+  const lam = (L + 1.915*Math.sin(g) + 0.020*Math.sin(2*g)) * rad;
+  const eps = (23.439 - 0.0000004*n) * rad;
+  const dec = Math.asin(Math.sin(eps)*Math.sin(lam));
+  const ra = Math.atan2(Math.cos(eps)*Math.sin(lam), Math.cos(lam)) / rad;
+  const eot = (((L - ra + 540) % 360) - 180) * 4;                 // 분
+  const cosH = (Math.sin(-0.833*rad) - Math.sin(lat*rad)*Math.sin(dec)) / (Math.cos(lat*rad)*Math.cos(dec));
+  let noon = Math.floor(noonMs/86400000)*86400000 + (720 - 4*lon - eot)*60000;
+  while(noon - noonMs > 43200000) noon -= 86400000;
+  while(noonMs - noon > 43200000) noon += 86400000;
+  if(cosH > 1)  return { polar:'night', noon };
+  if(cosH < -1) return { polar:'day', noon };
+  const H = Math.acos(cosH) / rad;
+  return { rise: noon - H*4*60000, set: noon + H*4*60000, noon };
+}
+
+function metToWmo(code){
+  const b = (code || '').replace(/_(day|night|polartwilight)$/, '');
+  const heavy = b.startsWith('heavy'), light = b.startsWith('light');
+  if(b.includes('thunder')) return 95;
+  if(b.includes('snowshowers')) return heavy ? 86 : 85;
+  if(b.includes('snow')) return heavy ? 75 : light ? 71 : 73;
+  if(b.includes('sleet')) return light ? 66 : 67;
+  if(b.includes('rainshowers')) return heavy ? 82 : light ? 80 : 81;
+  if(b.includes('rain')) return heavy ? 65 : light ? 61 : 63;
+  if(b === 'fog') return 45;
+  if(b === 'partlycloudy') return 2;
+  if(b === 'cloudy') return 3;
+  if(b === 'fair') return 1;
+  if(b === 'clearsky') return 0;
+  return 3;
+}
+function apparentTemp(T, RH, ws){ // ws: m/s
+  const e = RH/100 * 6.105 * Math.exp(17.27*T/(237.7+T));
+  return T + 0.33*e - 0.70*ws - 4.00;
+}
+
+/* MET Norway 응답 → 화면이 쓰는 형태(현재/시간별/일별)로 변환 */
+function metToShape(j, lat, lon, tz){
+  const E = j.properties.timeseries.map(e => ({
+    ms: Date.parse(e.time), i: e.data.instant.details,
+    n1: e.data.next_1_hours, n6: e.data.next_6_hours, n12: e.data.next_12_hours
+  }));
+  const now = Date.now();
+  let ci = 0; for(let k=0;k<E.length;k++){ if(E[k].ms <= now) ci = k; else break; }
+  const symOf = e => (e.n1 && e.n1.summary && e.n1.summary.symbol_code) || (e.n6 && e.n6.summary && e.n6.summary.symbol_code) ||
+                     (e.n12 && e.n12.summary && e.n12.summary.symbol_code) || 'cloudy';
+  const amt = x => (x && x.details && x.details.precipitation_amount) || 0;
+  const iso = ms => localISO(ms, tz);
+  const today = iso(now).slice(0,10);
+  const cur = E[ci];
+
+  // 날짜별 집계
+  const byDay = {};
+  E.forEach((e,k) => {
+    const next = E[k+1];
+    const gap = next ? (next.ms - e.ms)/3600000 : (e.n1 ? 1 : 6);
+    const p = gap <= 1 ? amt(e.n1) : (e.n6 ? amt(e.n6) : amt(e.n1));
+    const t = iso(e.ms), day = t.slice(0,10), hr = +t.slice(11,13);
+    const D = byDay[day] || (byDay[day] = {t:[], uv:[], p:0, codes:[], dcodes:[]});
+    D.t.push(e.i.air_temperature);
+    if(e.n6 && e.n6.details){
+      if(e.n6.details.air_temperature_max != null) D.t.push(e.n6.details.air_temperature_max);
+      if(e.n6.details.air_temperature_min != null) D.t.push(e.n6.details.air_temperature_min);
+    }
+    if(e.i.ultraviolet_index_clear_sky != null) D.uv.push(e.i.ultraviolet_index_clear_sky);
+    D.p += p;
+    const code = metToWmo(symOf(e)); D.codes.push(code); if(hr >= 8 && hr <= 20) D.dcodes.push(code);
+  });
+  const pick = arr => {
+    if(!arr.length) return 3;
+    if(arr.some(c => c >= 95)) return 95;
+    const wet = arr.filter(c => c >= 51);
+    const pool = wet.length*3 >= arr.length ? wet : arr, cnt = {};
+    pool.forEach(c => cnt[c] = (cnt[c]||0) + 1);
+    return +Object.keys(cnt).sort((a,b) => cnt[b]-cnt[a] || b-a)[0];
+  };
+
+  const daily = { time:[], weather_code:[], temperature_2m_max:[], temperature_2m_min:[], precipitation_sum:[],
+                  precipitation_probability_max:[], sunrise:[], sunset:[], uv_index_max:[] };
+  for(let k=0;k<7;k++){
+    const day = addDays(today,k), D = byDay[day]; if(!D) break;
+    const st = sunTimes(lat, lon, localToMs(day,12,0,tz));
+    let sr, ss;
+    if(st.rise){ sr = iso(st.rise); ss = iso(st.set); }
+    else if(st.polar === 'day'){ sr = day+'T00:00'; ss = day+'T23:59'; }
+    else { sr = ss = day+'T12:00'; }
+    daily.time.push(day);
+    daily.weather_code.push(pick(D.dcodes.length ? D.dcodes : D.codes));
+    daily.temperature_2m_max.push(Math.max(...D.t));
+    daily.temperature_2m_min.push(Math.min(...D.t));
+    daily.precipitation_sum.push(D.p);
+    daily.precipitation_probability_max.push(null);
+    daily.sunrise.push(sr); daily.sunset.push(ss);
+    daily.uv_index_max.push(D.uv.length ? Math.max(...D.uv) : 0);
+  }
+
+  // 시간별 (MET는 약 64시간까지 1시간 간격)
+  const hourly = { time:[], temperature_2m:[], precipitation_probability:[], precipitation:[], weather_code:[] };
+  for(let k=ci;k<E.length;k++){
+    const e = E[k]; if(!e.n1) break;
+    hourly.time.push(iso(e.ms)); hourly.temperature_2m.push(e.i.air_temperature);
+    hourly.precipitation_probability.push(null); hourly.precipitation.push(amt(e.n1));
+    hourly.weather_code.push(metToWmo(symOf(e)));
+  }
+
+  // 현재
+  const st0 = sunTimes(lat, lon, localToMs(today,12,0,tz));
+  const isDay = st0.rise ? ((now >= st0.rise && now <= st0.set) ? 1 : 0) : (st0.polar === 'day' ? 1 : 0);
+  const T = cur.i.air_temperature, RH = cur.i.relative_humidity ?? 50, ws = cur.i.wind_speed ?? 0;
+  return {
+    current: {
+      time: iso(now), temperature_2m: T, relative_humidity_2m: RH,
+      apparent_temperature: cur.i.apparent_air_temperature ?? apparentTemp(T, RH, ws),
+      is_day: isDay, precipitation: amt(cur.n1), weather_code: metToWmo(symOf(cur)),
+      cloud_cover: cur.i.cloud_area_fraction ?? 0, pressure_msl: cur.i.air_pressure_at_sea_level ?? 1013,
+      wind_speed_10m: ws*3.6, wind_direction_10m: cur.i.wind_from_direction
+    },
+    hourly, daily
+  };
+}
+
+async function fetchMetJson(lat, lon){
+  const la = (+lat).toFixed(4), lo = (+lon).toFixed(4), key = 'met:'+la+','+lo;   // MET는 소수점 4자리까지만 허용
+  try{ const c = JSON.parse(sessionStorage.getItem(key) || 'null'); if(c && Date.now()-c.t < 600000) return c.j; }catch(e){}
+  const res = await fetch('https://api.met.no/weatherapi/locationforecast/2.0/complete?lat='+la+'&lon='+lo);
+  if(!res.ok) throw new Error('met http '+res.status);
+  const j = await res.json();
+  if(!j.properties || !j.properties.timeseries || !j.properties.timeseries.length) throw new Error('met empty');
+  try{ sessionStorage.setItem(key, JSON.stringify({t:Date.now(), j})); }catch(e){}
+  return j;
+}
+
+async function fetchWeather(){
+  const loc = state.loc;
+  let tz = loc.tz || browserTz();
+  try{ new Intl.DateTimeFormat('en',{timeZone:tz}); }catch(e){ tz = browserTz(); }
+  try{
+    const j = await fetchMetJson(loc.lat, loc.lon);
+    const d = metToShape(j, loc.lat, loc.lon, tz); d.provider = 'MET Norway'; return d;
+  }catch(e){
+    console.warn('MET Norway failed, falling back to Open-Meteo', e);
+    const d = await fetchOpenMeteo(); d.provider = 'Open-Meteo'; return d;
+  }
+}
+
+async function fetchOpenMeteo(){
+  const { lat, lon } = state.loc;
+  const url = 'https://api.open-meteo.com/v1/forecast?latitude='+lat+'&longitude='+lon+
+    '&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,precipitation,weather_code,cloud_cover,pressure_msl,wind_speed_10m,wind_direction_10m'+
+    '&hourly=temperature_2m,precipitation_probability,precipitation,weather_code'+
+    '&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,sunrise,sunset,uv_index_max'+
+    '&timezone=auto&forecast_days=7';
+  const res = await fetch(url);
+  if(!res.ok) throw new Error('weather http '+res.status);
+  return res.json();
+}
+
+async function reverseGeocode(lat, lon, lang){
+  const url = 'https://api.bigdatacloud.net/data/reverse-geocode-client?latitude='+lat+'&longitude='+lon+'&localityLanguage='+(lang||'en');
+  const res = await fetch(url);
+  if(!res.ok) throw new Error('geo http');
+  return res.json();
+}
+
+async function loadLocation(loc, opts={}){
+  state.loc = loc;
+  state.lang = langForCountry(loc.country);
+  applyStaticText();
+  setStatus(L().loading);
+  setNote(opts.note || '');
+  try{
+    state.data = await fetchWeather();
+    render();
+    updateScene();
+  }catch(e){
+    console.error(e);
+    setStatus(L().error);
+  }
+}
+
+async function locate(){
+  const lang = state.manualLang || state.lang || 'ko';
+  setStatus(I18N[lang].locating);
+  setNote('');
+
+  // 브라우저 위치 권한이 없거나 file:// 등 보안 컨텍스트가 아닌 경우
+  // IP 기반 대략 위치를 시도한 뒤, 그것도 실패하면 서울을 표시합니다.
+  const useFallback = async () => {
+    try{
+      const res = await fetch('https://ipapi.co/json/', { cache:'no-store' });
+      if(!res.ok) throw new Error('IP location HTTP ' + res.status);
+      const g = await res.json();
+      const lat = Number(g.latitude), lon = Number(g.longitude);
+      if(!Number.isFinite(lat) || !Number.isFinite(lon)) throw new Error('IP location coordinates missing');
+      const cc = (g.country_code || '').toUpperCase();
+      const loc = {
+        lat, lon,
+        name: g.city || g.region || `${lat.toFixed(2)}, ${lon.toFixed(2)}`,
+        admin: g.region || '',
+        country: cc,
+        tz: g.timezone || browserTz()
+      };
+      await loadLocation(loc, {note: lang==='ko'
+        ? '브라우저 위치를 사용할 수 없어 IP 기반 대략적인 위치를 표시합니다.'
+        : 'Browser location unavailable; showing an approximate IP-based location.'});
+    }catch(err){
+      console.warn('IP location failed; using default location.', err);
+      await loadLocation(DEFAULT_LOC, {note:I18N[state.manualLang || 'ko'].fallback});
+    }
+  };
+
+  if(!navigator.geolocation){
+    await useFallback();
+    return;
+  }
+
+  navigator.geolocation.getCurrentPosition(async pos=>{
+    try{
+      const lat = pos.coords.latitude, lon = pos.coords.longitude;
+      let loc = { lat, lon, name:`${lat.toFixed(2)}, ${lon.toFixed(2)}`, admin:'', country:'', tz:browserTz() };
+      try{
+        const g1 = await reverseGeocode(lat, lon, 'en');
+        const cc = g1.countryCode || '';
+        const language = state.manualLang || langForCountry(cc);
+        let g = g1;
+        if(language !== 'en'){
+          try{ g = await reverseGeocode(lat, lon, language); }catch(e){ console.warn('Localized reverse geocode failed', e); }
+        }
+        loc = {
+          lat, lon,
+          name: g.city || g.locality || g.principalSubdivision || loc.name,
+          admin: (g.city || g.locality) ? (g.principalSubdivision || '') : '',
+          country: cc,
+          tz: browserTz()
+        };
+      }catch(e){ console.warn('Reverse geocoding failed; showing coordinates.', e); }
+      await loadLocation(loc);
+    }catch(err){
+      console.error('Location processing failed:', err);
+      await useFallback();
+    }
+  }, async err=>{
+    console.warn('Browser geolocation failed:', err && {code:err.code, message:err.message});
+    await useFallback();
+  }, { enableHighAccuracy:false, timeout:12000, maximumAge:600000 });
+}
+
+/* ---------- search ---------- */
+let searchTimer = null;
+$('q').addEventListener('input', e=>{
+  const v = e.target.value.trim();
+  clearTimeout(searchTimer);
+  if(v.length<2){ $('results').style.display='none'; return; }
+  searchTimer = setTimeout(()=>doSearch(v), 300);
+});
+async function doSearch(v){
+  const box = $('results');
+  try{
+    const res = await fetch('https://geocoding-api.open-meteo.com/v1/search?name='+encodeURIComponent(v)+'&count=6&language='+activeLang());
+    const j = await res.json();
+    const items = j.results || [];
+    if(!items.length){ box.innerHTML = `<div>${escapeHtml(L().noResult)}</div>`; box.style.display='block'; return; }
+    box.innerHTML = items.map((r,i)=>
+      `<div data-i="${i}">${escapeHtml(r.name)} <small>${escapeHtml([r.admin1,r.country].filter(Boolean).join(', '))}</small></div>`).join('');
+    box.style.display='block';
+    box.querySelectorAll('div').forEach(el=>{
+      el.addEventListener('click',()=>{
+        const r = items[+el.dataset.i]; if(!r) return;
+        box.style.display='none'; $('q').value='';
+        loadLocation({ lat:r.latitude, lon:r.longitude, name:r.name, admin:r.admin1||'', country:r.country_code||'', tz:r.timezone||browserTz() });
+      });
+    });
+  }catch(e){ box.style.display='none'; }
+}
+document.addEventListener('click', e=>{ if(!e.target.closest('.search')) $('results').style.display='none'; });
+
+/* ---------- 배경 장면 엔진 (실시간 생성 애니메이션) ---------- */
+/* 실제 촬영 영상을 쓰고 싶으면 아래에 mp4/webm 주소를 넣으세요. 비워두면 코드로 만든 애니메이션이 재생됩니다. */
+const VIDEO_SOURCES = {
+  'clear-day':'', 'clear-night':'', 'cloudy':'', 'fog':'', 'rain':'', 'snow':'', 'storm':''
+};
+const RAIN_I = {5:.25,6:.3,7:.4,8:.7,9:1,10:.55,15:.7,16:1,18:.9,19:1};
+const SNOW_I = {11:.35,12:.7,13:1,14:.4,17:.7};
+
+const bg = $('bg'), ctx = bg.getContext('2d'), bvid = $('bgVideo');
+let W = 0, H = 0;
+const scene = { theme:'clear-day', night:false, alt:.6, sunP:.5, moonQ:.5, rise:360, set:1080, clock:720, clockAt:0, validSun:true, cover:20, wind:8, rain:0, snow:0, thunder:false,
+  sprites:[], clouds:[], stars:[], drops:[], flakes:[], t:0, flash:0, flick:0, bolt:null, nextBolt:3, shoot:null, nextShoot:6 };
+const reduceMotion = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const clamp01 = v => Math.max(0, Math.min(1, v));
+const smooth = (a,b,v) => { const t = clamp01((v-a)/(b-a)); return t*t*(3-2*t); };
+const hex2rgb = h => { const n = parseInt(h.slice(1),16); return [(n>>16)&255, (n>>8)&255, n&255]; };
+const mixRgb = (a,b,t) => [a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t];
+const mixPal = (p1,p2,t) => p1.map((c,i)=>mixRgb(c,p2[i],t));
+const rgbStr = c => `rgb(${c[0]|0},${c[1]|0},${c[2]|0})`;
+const PAL = o => o.map(hex2rgb);
+
+/* 태양 고도(alt): 낮 = 0(일출)→1(정오)→0(일몰), 밤 = 0(일몰)→-1(자정)→0(일출) */
+const CLEAR_STOPS = [
+  [-1,   PAL(['#02050f','#060c20','#0e1a3d'])],   // 한밤
+  [-.35, PAL(['#0a1230','#18214a','#2f3466'])],   // 깊은 황혼
+  [-.12, PAL(['#252f63','#7d4a85','#d77f6a'])],   // 박명(새벽·저녁 보랏빛)
+  [0,    PAL(['#3a3f86','#d0698a','#ffa860'])],   // 일출·일몰 붉은 하늘
+  [.15,  PAL(['#3f66b0','#d99a82','#ffd09a'])],   // 골든아워(아침·늦은 오후)
+  [.4,   PAL(['#3478c8','#78b4e6','#f0dcc0'])],   // 오전·오후
+  [.7,   PAL(['#2a7ad2','#62b2f0','#bfe2f9'])],
+  [1,    PAL(['#1c68c8','#4aa0ea','#a4d6f8'])]    // 한낮
+];
+function clearPalette(alt){
+  for(let i=1;i<CLEAR_STOPS.length;i++){
+    if(alt <= CLEAR_STOPS[i][0]){
+      const [a0,p0] = CLEAR_STOPS[i-1], [a1,p1] = CLEAR_STOPS[i];
+      return mixPal(p0, p1, (alt-a0)/(a1-a0));
+    }
+  }
+  return CLEAR_STOPS[CLEAR_STOPS.length-1][1];
+}
+const WEATHER_PAL = { // [낮, 밤]
+  cloudy:[PAL(['#667585','#919eac','#bfc9d2']), PAL(['#161b25','#252d3b','#364152'])],
+  fog:   [PAL(['#98a3ac','#b6bfc6','#d3d9de']), PAL(['#1f262e','#323d49','#485664'])],
+  rain:  [PAL(['#38444f','#55636f','#76848f']), PAL(['#0d1219','#18212c','#262f3c'])],
+  snow:  [PAL(['#8398ad','#adbfd0','#dbe5ee']), PAL(['#1c2736','#33455a','#51657c'])],
+  storm: [PAL(['#1c1a2a','#35304f','#544c70']), PAL(['#0b0a14','#181528','#2a2540'])]
+};
+function skyColors(){
+  const s = scene;
+  let pal;
+  if(s.theme.startsWith('clear')) pal = clearPalette(s.alt);
+  else {
+    const [day,night] = WEATHER_PAL[s.theme] || WEATHER_PAL.cloudy;
+    pal = mixPal(night, day, smooth(-.2,.35,s.alt));
+    const warm = Math.max(0, 1 - Math.abs(s.alt)/.25) * (s.theme==='storm' ? .15 : .3);
+    if(warm > 0) pal = mixPal(pal, PAL(['#6a4a6e','#c9766f','#f0a064']), warm);
+  }
+  return pal.map(rgbStr);
+}
+function cloudTint(){
+  const s = scene, th = s.theme, k = smooth(-.2,.35,s.alt);
+  const mix4 = (a,b,t) => [a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t, a[3]+(b[3]-a[3])*t];
+  const T = {
+    clear:[[70,84,120,.45],[255,255,255,.6]], cloudy:[[78,88,110,.6],[214,221,228,.65]],
+    fog:[[110,124,138,.35],[225,231,235,.4]], rain:[[44,52,66,.75],[96,108,122,.75]],
+    snow:[[120,138,160,.5],[238,243,248,.55]], storm:[[40,36,58,.85],[62,58,84,.85]]
+  };
+  let c = mix4(T[th.startsWith('clear') ? 'clear' : th][0], T[th.startsWith('clear') ? 'clear' : th][1], k);
+  const warm = Math.max(0, 1 - Math.abs(s.alt)/.25);
+  if(warm > 0 && th !== 'storm') c = mix4(c, [255,176,150,Math.max(c[3],.6)], warm*.75);
+  return c;
+}
+function makeCloudSprite(tint){
+  const [r,g,b,a] = tint;
+  const c = document.createElement('canvas'); c.width = 640; c.height = 280;
+  const x = c.getContext('2d'), puffs = [];
+  for(let i=0;i<22;i++){
+    const px = 140 + Math.random()*360;
+    puffs.push([px, 150 + Math.random()*50 - Math.abs(px-320)/360*40, 40 + Math.random()*60]);
+  }
+  for(let i=0;i<8;i++) puffs.push([100 + Math.random()*440, 185 + Math.random()*25, 40 + Math.random()*30]);
+  for(const [px,py,pr] of puffs){
+    const gr = x.createRadialGradient(px,py,0,px,py,pr);
+    gr.addColorStop(0, `rgba(${r},${g},${b},${a})`);
+    gr.addColorStop(.55, `rgba(${r},${g},${b},${a*.55})`);
+    gr.addColorStop(1, `rgba(${r},${g},${b},0)`);
+    x.fillStyle = gr; x.beginPath(); x.arc(px,py,pr,0,7); x.fill();
+  }
+  return c;
+}
+let flakeSprite = null;
+let tintKey = '';
+function makeFlakeSprite(){
+  const c = document.createElement('canvas'); c.width = c.height = 32;
+  const x = c.getContext('2d'), g = x.createRadialGradient(16,16,0,16,16,16);
+  g.addColorStop(0,'rgba(255,255,255,1)'); g.addColorStop(.35,'rgba(255,255,255,.7)'); g.addColorStop(1,'rgba(255,255,255,0)');
+  x.fillStyle = g; x.fillRect(0,0,32,32);
+  return c;
+}
+
+function resizeBg(){
+  const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+  W = window.innerWidth; H = window.innerHeight;
+  bg.width = Math.round(W*dpr); bg.height = Math.round(H*dpr);
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+}
+
+function buildScene(){
+  const s = scene, th = s.theme, mobile = W < 700;
+  const tint = cloudTint();
+  s.sprites = [makeCloudSprite(tint), makeCloudSprite(tint), makeCloudSprite(tint)];
+  tintKey = s.theme + Math.round(s.alt*10);
+  if(!flakeSprite) flakeSprite = makeFlakeSprite();
+
+  const n = th.startsWith('clear') ? Math.round(s.cover/100*8) : ({cloudy:10,rain:11,storm:12,snow:9,fog:5}[th] || 6);
+  s.clouds = [];
+  for(let i=0;i<n;i++){
+    const layer = Math.random(), big = th==='fog' ? 2.2 : 1;
+    s.clouds.push({
+      sp: s.sprites[i%3],
+      x: Math.random()*(W+500) - 300,
+      y: (th==='fog' ? .35 + Math.random()*.6 : Math.random()*.5) * H * (1 - .3*layer) - 40,
+      w: (mobile?360:560) * (.7 + layer*.9) * big,
+      v: (3 + layer*9) * (.5 + s.wind/25),
+      a: .55 + layer*.45
+    });
+  }
+
+  s.stars = [];
+  if(th.startsWith('clear')){
+    const cnt = Math.round((mobile?160:320) * (1 - s.cover/130));
+    for(let i=0;i<cnt;i++) s.stars.push({x:Math.random()*W, y:Math.random()*H*.8, r:.4+Math.random()*1.2, p:Math.random()*6.28, sp:.6+Math.random()*2});
+  }
+
+  s.drops = [];
+  const dn = Math.round(s.rain * (mobile?280:560));
+  for(let i=0;i<dn;i++) s.drops.push({x:Math.random()*W, y:Math.random()*H, len:10+Math.random()*18, v:600+Math.random()*500});
+
+  s.flakes = [];
+  const fn = Math.round(s.snow * (mobile?150:320));
+  for(let i=0;i<fn;i++) s.flakes.push({x:Math.random()*W, y:Math.random()*H, r:2+Math.random()*7, v:30+Math.random()*60, sw:Math.random()*6.28, a:.5+Math.random()*.5});
+}
+
+function currentMin(){ return scene.clock + (performance.now() - scene.clockAt)/60000; }
+function updateSun(){
+  const s = scene;
+  if(!s.validSun){ s.alt = s.night ? -.8 : .8; s.sunP = .5; s.moonQ = .5; return; }
+  let m = currentMin(); m = ((m % 1440) + 1440) % 1440;
+  const rise = s.rise, set = s.set;
+  if(m >= rise && m <= set){
+    s.sunP = (m-rise)/(set-rise); s.alt = Math.sin(Math.PI*s.sunP); s.night = false; s.moonQ = 0;
+  } else {
+    const nightLen = (1440-set) + rise, el = m > set ? m-set : m+1440-set;
+    s.moonQ = clamp01(el/nightLen); s.alt = -Math.sin(Math.PI*s.moonQ); s.night = true;
+  }
+}
+function refreshTint(){
+  const key = scene.theme + Math.round(scene.alt*10);
+  if(key === tintKey) return;
+  tintKey = key;
+  const t = cloudTint();
+  scene.sprites = [makeCloudSprite(t), makeCloudSprite(t), makeCloudSprite(t)];
+  scene.clouds.forEach((c,i)=>{ c.sp = scene.sprites[i%3]; });
+}
+
+function updateScene(){
+  const d = state.data; if(!d) return;
+  const c = d.current, dy = d.daily, idx = codeIndex(c.weather_code);
+  const mins = s => { const t = s.split('T')[1].split(':'); return (+t[0])*60 + (+t[1]); };
+  const hp = new URLSearchParams(location.search).get('hour'); // 미리보기: weather.html?hour=18
+  const rise = mins(dy.sunrise[0]), set = mins(dy.sunset[0]);
+  Object.assign(scene, {
+    rise, set, validSun: set > rise,
+    clock: (hp !== null && hp !== '' && !isNaN(+hp)) ? (+hp)*60 : mins(c.time),
+    clockAt: performance.now(),
+    night: !c.is_day,
+    cover: c.cloud_cover || 0,
+    wind: c.wind_speed_10m || 0,
+    rain: RAIN_I[idx] || 0,
+    snow: SNOW_I[idx] || 0,
+    thunder: idx >= 18
+  });
+  updateSun();
+  if(!weatherPreviewActive) scene.theme = codeTheme(c.weather_code, !scene.night);
+  bg.style.opacity = '0';
+  buildScene();
+  applyVideo(scene.theme);
+  requestAnimationFrame(()=>{ bg.style.opacity = '1'; });
+}
+
+function applyVideo(theme){
+  const src = VIDEO_SOURCES[theme];
+  if(src){
+    if(bvid.getAttribute('src') !== src) bvid.src = src;
+    bvid.style.display = 'block'; bg.style.display = 'none';
+    bvid.play().catch(()=>{});
+  } else {
+    bvid.pause(); bvid.removeAttribute('src'); bvid.style.display = 'none'; bg.style.display = 'block';
+  }
+}
+bvid.addEventListener('error', ()=>{ bvid.style.display = 'none'; bg.style.display = 'block'; });
+
+function drawSky(){
+  const [a,b,c] = skyColors();
+  const g = ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,a); g.addColorStop(.55,b); g.addColorStop(1,c);
+  ctx.fillStyle = g; ctx.fillRect(0,0,W,H);
+}
+function drawCelestial(){
+  const s = scene, th = s.theme, clear = th.startsWith('clear');
+  const arcX = p => W*(.1 + .8*p), arcY = p => H*(.74 - .42*Math.sin(Math.PI*p));
+  if(!s.night && (clear || th === 'cloudy')){
+    const x = arcX(s.sunP), y = arcY(s.sunP);
+    const low = 1 - smooth(0,.5,s.alt), ga = clear ? 1 : .4;
+    const R = Math.min(W,H) * (.65 + .3*low) * (clear ? 1 : .75);
+    const core = mixRgb([255,248,220],[255,160,90],low).map(Math.round);
+    const mid  = mixRgb([255,236,170],[255,130,80],low).map(Math.round);
+    const g = ctx.createRadialGradient(x,y,0,x,y,R);
+    g.addColorStop(0, `rgba(${core},${.9*ga})`);
+    g.addColorStop(.12, `rgba(${mid},${.45*ga})`);
+    g.addColorStop(1, `rgba(${mid},0)`);
+    ctx.fillStyle = g; ctx.fillRect(0,0,W,H);
+    if(clear){
+      const disc = mixRgb([255,251,232],[255,190,120],low).map(Math.round);
+      ctx.fillStyle = `rgb(${disc})`;
+      ctx.beginPath(); ctx.arc(x,y,(36+14*low)*(1+Math.sin(s.t*.8)*.03),0,7); ctx.fill();
+    }
+  } else if(s.night && (clear || th === 'cloudy')){
+    const x = arcX(s.moonQ), y = arcY(s.moonQ);
+    ctx.globalAlpha = clamp01(-s.alt/.2) * (clear ? 1 : .3);
+    const R = Math.min(W,H)*.45;
+    const g = ctx.createRadialGradient(x,y,0,x,y,R);
+    g.addColorStop(0,'rgba(200,215,255,.45)'); g.addColorStop(.2,'rgba(160,180,240,.15)'); g.addColorStop(1,'rgba(120,140,220,0)');
+    ctx.fillStyle = g; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle = '#f3f1e6'; ctx.beginPath(); ctx.arc(x,y,32,0,7); ctx.fill();
+    ctx.fillStyle = 'rgba(170,170,160,.35)';
+    [[-9,-6,7],[8,5,5],[-4,11,4],[10,-10,3]].forEach(([dx,dy,r])=>{ ctx.beginPath(); ctx.arc(x+dx,y+dy,r,0,7); ctx.fill(); });
+    ctx.globalAlpha = 1;
+  }
+}
+function drawStars(dt){
+  const s = scene; if(!s.stars.length) return;
+  const k = clamp01((-s.alt - .04)/.3);
+  if(k <= 0) return;
+  ctx.fillStyle = '#fff';
+  for(const st of s.stars){
+    ctx.globalAlpha = (.35 + .65*(.5 + .5*Math.sin(s.t*st.sp + st.p))) * k;
+    ctx.beginPath(); ctx.arc(st.x, st.y, st.r, 0, 7); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  if(k > .9){
+    if(!s.shoot && s.t > s.nextShoot){
+      s.shoot = {x:Math.random()*W*.8, y:Math.random()*H*.35, vx:500+Math.random()*300, vy:220+Math.random()*120, life:1};
+      s.nextShoot = s.t + 8 + Math.random()*8;
+    }
+    if(s.shoot){
+      const sh = s.shoot, g = ctx.createLinearGradient(sh.x,sh.y,sh.x-sh.vx*.12,sh.y-sh.vy*.12);
+      g.addColorStop(0,`rgba(255,255,255,${sh.life})`); g.addColorStop(1,'rgba(255,255,255,0)');
+      ctx.strokeStyle = g; ctx.lineWidth = 1.6; ctx.beginPath();
+      ctx.moveTo(sh.x,sh.y); ctx.lineTo(sh.x-sh.vx*.12, sh.y-sh.vy*.12); ctx.stroke();
+      sh.x += sh.vx*dt; sh.y += sh.vy*dt; sh.life -= dt*1.4;
+      if(sh.life <= 0) s.shoot = null;
+    }
+  }
+}
+function drawClouds(dt){
+  for(const c of scene.clouds){
+    c.x += c.v*dt;
+    if(c.x > W + 50) c.x = -c.w;
+    ctx.globalAlpha = c.a;
+    ctx.drawImage(c.sp, c.x, c.y, c.w, c.w*.4375);
+  }
+  ctx.globalAlpha = 1;
+  if(scene.theme === 'fog'){
+    ctx.fillStyle = scene.night ? 'rgba(80,92,104,.25)' : 'rgba(215,221,226,.28)';
+    ctx.fillRect(0,0,W,H);
+  }
+}
+function drawRain(dt){
+  const s = scene; if(!s.drops.length) return;
+  const slant = Math.min(s.wind/40, 1) * .6 + .08;
+  ctx.strokeStyle = s.night ? 'rgba(170,190,220,.32)' : 'rgba(205,218,235,.4)';
+  ctx.lineWidth = 1.1; ctx.beginPath();
+  for(const d of s.drops){
+    d.y += d.v*dt; d.x += d.v*dt*slant;
+    if(d.y > H){ d.y = -d.len; d.x = Math.random()*(W+200) - 100; }
+    if(d.x > W+100) d.x -= W+200;
+    ctx.moveTo(d.x, d.y); ctx.lineTo(d.x - slant*d.len, d.y - d.len);
+  }
+  ctx.stroke();
+  const g = ctx.createLinearGradient(0,H*.8,0,H);
+  g.addColorStop(0,'rgba(200,210,225,0)'); g.addColorStop(1,'rgba(200,210,225,.18)');
+  ctx.fillStyle = g; ctx.fillRect(0,H*.8,W,H*.2);
+}
+function drawSnow(dt){
+  const s = scene; if(!s.flakes.length) return;
+  const drift = Math.min(s.wind,40)*.8;
+  for(const f of s.flakes){
+    f.y += f.v*dt;
+    f.x += (Math.sin(s.t*.8 + f.sw)*20 + drift)*dt;
+    if(f.y > H + 10){ f.y = -10; f.x = Math.random()*W; }
+    if(f.x > W + 10) f.x = -10; else if(f.x < -10) f.x = W + 10;
+    ctx.globalAlpha = f.a;
+    ctx.drawImage(flakeSprite, f.x - f.r, f.y - f.r, f.r*2, f.r*2);
+  }
+  ctx.globalAlpha = 1;
+}
+function makeBolt(){
+  const s = scene; let x = W*(.15 + Math.random()*.7), y = 0;
+  const main = [[x,y]], segs = [], maxY = H*(.55 + Math.random()*.3);
+  while(y < maxY){
+    y += 20 + Math.random()*30; x += (Math.random()-.5)*50; main.push([x,y]);
+    if(Math.random() < .12){
+      let bx = x, by = y; const br = [[bx,by]];
+      for(let k=0;k<5;k++){ by += 15 + Math.random()*20; bx += (Math.random()-.3)*40; br.push([bx,by]); }
+      segs.push({pts:br, w:1.2});
+    }
+  }
+  segs.push({pts:main, w:2.6});
+  s.bolt = segs; s.flash = 1; s.flick = 1 + Math.floor(Math.random()*2);
+}
+function drawLightning(dt){
+  const s = scene; if(!s.thunder) return;
+  if(s.t > s.nextBolt){ makeBolt(); s.nextBolt = s.t + 2.5 + Math.random()*7; }
+  if(s.flash > 0){
+    ctx.fillStyle = `rgba(215,222,255,${s.flash*.32})`; ctx.fillRect(0,0,W,H);
+    if(s.bolt){
+      ctx.save(); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.shadowColor = 'rgba(170,185,255,1)'; ctx.shadowBlur = 24;
+      ctx.strokeStyle = `rgba(255,255,255,${Math.min(1, s.flash*1.4)})`;
+      for(const seg of s.bolt){
+        ctx.lineWidth = seg.w; ctx.beginPath(); ctx.moveTo(seg.pts[0][0], seg.pts[0][1]);
+        for(let i=1;i<seg.pts.length;i++) ctx.lineTo(seg.pts[i][0], seg.pts[i][1]);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+    s.flash -= dt*2.4;
+    if(s.flash <= 0){
+      if(s.flick > 0){ s.flick--; s.flash = .7; } else { s.flash = 0; s.bolt = null; }
+    }
+  }
+}
+function drawVignette(){
+  const g = ctx.createRadialGradient(W/2,H/2,Math.min(W,H)*.35,W/2,H/2,Math.max(W,H)*.75);
+  g.addColorStop(0,'rgba(0,0,0,0)'); g.addColorStop(1,'rgba(0,0,0,.35)');
+  ctx.fillStyle = g; ctx.fillRect(0,0,W,H);
+}
+
+let lastTs = 0, lastTick = 0;
+function frame(ts){
+  requestAnimationFrame(frame);
+  if(document.hidden || bg.style.display === 'none'){ lastTs = ts; return; }
+  const dt = reduceMotion ? 0 : Math.min((ts - lastTs)/1000 || 0, .05);
+  lastTs = ts; scene.t += dt;
+  if(ts - lastTick > 1000){ lastTick = ts; updateSun(); refreshTint(); }
+  drawSky(); drawCelestial(); drawStars(dt); drawClouds(dt);
+  drawRain(dt); drawSnow(dt); drawLightning(dt); drawVignette();
+}
+
+let resizeTimer = null;
+window.addEventListener('resize', ()=>{
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(()=>{ resizeBg(); buildScene(); }, 200);
+});
+resizeBg(); buildScene(); bg.style.opacity = '1'; requestAnimationFrame(frame);
+
+/* ---------- events ---------- */
+$('locBtn').addEventListener('click', locate);
+$('langSel').addEventListener('change', e=>{
+  const v = e.target.value;
+  state.manualLang = v==='auto' ? null : v;
+  safeSet('weather_lang', v);
+  applyStaticText();
+  if(state.data) render();
+});
+
+/* ---------- init ---------- */
+(function init(){
+  const saved = safeGet('weather_lang');
+  if(saved && saved!=='auto' && I18N[saved]) state.manualLang = saved;
+  applyStaticText();
+  if(!window.isSecureContext && location.protocol !== 'file:') {
+    setNote(state.manualLang === 'en' ? 'Location access usually requires HTTPS or localhost.' : '정확한 위치 권한은 HTTPS 또는 localhost에서 더 잘 작동합니다.');
+  }
+  locate();
+})();
+</script>
+</body>
+</html>
