@@ -2,7 +2,11 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Weather">
 <title>Weather</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -93,6 +97,18 @@
   .note{text-align:center;font-size:.85rem;opacity:.8;margin-bottom:12px}
   footer{text-align:center;font-size:.75rem;opacity:.65;margin-top:20px}
   #setBtn{padding:0 14px;justify-content:center}
+  /* 상단 미니 위젯: 아이폰(다이나믹 아일랜드 위치) / 갤럭시(왼쪽 위) */
+  #miniW{position:fixed;z-index:40;display:none;align-items:center;gap:8px;height:37px;padding:0 14px;border-radius:999px;
+    background:rgba(0,0,0,.72);color:#fff;font-weight:600;font-size:.9rem;white-space:nowrap;text-shadow:none;
+    backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);pointer-events:none}
+  #miniW .mi{font-size:1.15rem;line-height:1}
+  #miniW .mn{font-weight:400;opacity:.8;font-size:.8rem;max-width:90px;overflow:hidden;text-overflow:ellipsis}
+  #miniW.island{top:11px;left:50%;transform:translateX(-50%);width:218px;padding:0 16px;gap:0;justify-content:space-between;background:#000}
+  #miniW.island .gap{width:126px;flex:none}
+  #miniW.topleft{top:calc(env(safe-area-inset-top,0px) + 8px);left:10px}
+  #miniW.topcenter{top:calc(env(safe-area-inset-top,0px) + 8px);left:50%;transform:translateX(-50%)}
+  body.mini-island .wrap{padding-top:64px}
+  body.mini-flow .wrap{padding-top:calc(env(safe-area-inset-top,0px) + 58px)}
   .overlay{position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;padding:16px}
   .overlay.open{display:flex}
   .panel{width:100%;max-width:460px;max-height:86vh;overflow:auto;background:rgba(22,32,52,.94);border-radius:28px;padding:22px;box-shadow:0 20px 60px rgba(0,0,0,.45)}
@@ -135,6 +151,7 @@
   <footer id="foot">정보제공: MET Norway · Geocoding: Open-Meteo, BigDataCloud</footer>
 </div>
 
+<div id="miniW"></div>
 <div class="overlay" id="setOverlay"><div class="panel" id="setPanel"></div></div>
 
 <script>
@@ -206,7 +223,7 @@ let state = { loc:null, lang:'ko', manualLang:null, data:null };
 const $ = id => document.getElementById(id);
 
 /* ---------- settings ---------- */
-const SETTINGS_DEFAULT = { level:'city', max:8, temp:'auto', dual:true, wind:'kmh', precip:'mm', press:'hpa', hour:'auto', anim:true };
+const SETTINGS_DEFAULT = { widget:'auto', level:'city', max:8, temp:'auto', dual:true, wind:'kmh', precip:'mm', press:'hpa', hour:'auto', anim:true };
 let settings = Object.assign({}, SETTINGS_DEFAULT);
 try{ Object.assign(settings, JSON.parse(localStorage.getItem('weather_settings') || '{}')); }catch(e){}
 function saveSettings(){ try{ localStorage.setItem('weather_settings', JSON.stringify(settings)); }catch(e){} }
@@ -479,6 +496,7 @@ const title = parts.length
     <div class="card"><h2>${t.hourly}</h2><div class="hourly">${hourlyHtml}</div></div>
     <div class="card"><h2>${t.daily}</h2>${dailyHtml}</div>
   `;
+  updateMini();
   const footerLabels = {
     ko: '정보제공', en: 'Weather data', ja: '情報提供', zh: '信息提供',
     es: 'Información meteorológica', fr: 'Informations météo', de: 'Wetterdaten', pt: 'Dados meteorológicos', ru: 'Данные о погоде'
@@ -1239,13 +1257,48 @@ window.addEventListener('resize', ()=>{
 });
 resizeBg(); buildScene(); bg.style.opacity = '1'; requestAnimationFrame(frame);
 
+/* ---------- 상단 미니 위젯 ---------- */
+/* 웹페이지는 카메라 구멍(다이나믹 아일랜드) 자체를 제어할 수 없어서, 그 위치에 맞춰 검은 알약 모양 위젯을 겹쳐 그립니다.
+   홈 화면에 추가한 웹앱(PWA)처럼 상태바 영역까지 화면이 그려질 때 가장 자연스럽게 보입니다. */
+const UA = navigator.userAgent || '';
+const IS_IPHONE = /iPhone/.test(UA);
+const IS_GALAXY = /SAMSUNG|SM-[A-Z0-9]+|SamsungBrowser/i.test(UA);
+function safeTopPx(){
+  const p = document.createElement('div');
+  p.style.cssText = 'position:fixed;top:0;left:0;visibility:hidden;padding-top:env(safe-area-inset-top,0px)';
+  document.body.appendChild(p);
+  const v = parseFloat(getComputedStyle(p).paddingTop) || 0;
+  p.remove(); return v;
+}
+function miniMode(){
+  if(settings.widget === 'off') return null;
+  if(IS_IPHONE) return safeTopPx() >= 54 ? 'island' : 'topcenter';
+  if(IS_GALAXY) return 'topleft';
+  return settings.widget === 'on' ? 'topleft' : null;
+}
+function updateMini(){
+  const el = $('miniW'), d = state.data, mode = d ? miniMode() : null;
+  document.body.classList.remove('mini-island','mini-flow');
+  if(!mode){ el.style.display = 'none'; return; }
+  const c = d.current, icon = codeIcon(c.weather_code, c.is_day), temp = tp(c.temperature_2m).main;
+  el.className = mode;
+  el.innerHTML = mode === 'island'
+    ? `<span class="mi">${icon}</span><span class="gap"></span><span>${temp}</span>`
+    : `<span class="mi">${icon}</span><span>${temp}</span><span class="mn">${escapeHtml((state.loc && state.loc.name) || '')}</span>`;
+  el.style.display = 'flex';
+  document.body.classList.add(mode === 'island' ? 'mini-island' : 'mini-flow');
+}
+window.addEventListener('orientationchange', () => setTimeout(updateMini, 300));
+
 /* ---------- settings panel ---------- */
 const S18N = {
-  ko:{title:'설정',level:'검색 범위',lvCity:'시·군',lvDist:'구 포함',lvAll:'읍·면·동 포함 (전체)',
+  ko:{title:'설정',level:'검색 범위',lvCity:'시·군',lvDist:'구 포함',lvAll:'읍·면·동 포함 (전체)',widget:'상단 미니 위젯',
+      wHint:'아이폰은 카메라(다이나믹 아일랜드) 위치에, 갤럭시는 왼쪽 위에 현재 날씨가 표시됩니다. 자동은 아이폰·갤럭시에서만 켜지고, 켜기는 PC 등에서도 왼쪽 위에 표시해요. 홈 화면에 추가한 앱으로 열면 상태바 영역까지 자연스럽게 보입니다.',
       lvHint:'구 포함: 서울 같은 곳은 동 단위 결과를 소속 구로 묶어 보여줍니다. 지역 데이터에 따라 일부 구는 빠질 수 있어요.',
       max:'검색 결과 수',temp:'온도 단위',auto:'자동',dual:'보조 단위 함께 표시',on:'켜기',off:'끄기',
       wind:'풍속 단위',precip:'강수량 단위',press:'기압 단위',hour:'시간 표기',h12:'12시간',h24:'24시간',anim:'배경 애니메이션',reset:'초기화',close:'닫기'},
-  en:{title:'Settings',level:'Search scope',lvCity:'Cities / counties',lvDist:'Include districts',lvAll:'Everything (incl. towns)',
+  en:{title:'Settings',level:'Search scope',lvCity:'Cities / counties',lvDist:'Include districts',lvAll:'Everything (incl. towns)',widget:'Top mini widget',
+      wHint:'Shows the current weather at the camera cutout (Dynamic Island) on iPhone and at the top-left on Galaxy. Auto only turns on for iPhone/Galaxy; On also shows it at the top-left elsewhere. Works best when opened from the Home Screen.',
       lvHint:'Districts: neighborhood results are grouped under their district (e.g. in Seoul). Some districts may be missing depending on the data.',
       max:'Number of results',temp:'Temperature unit',auto:'Auto',dual:'Show secondary units',on:'On',off:'Off',
       wind:'Wind unit',precip:'Precipitation unit',press:'Pressure unit',hour:'Time format',h12:'12-hour',h24:'24-hour',anim:'Background animation',reset:'Reset',close:'Close'}
@@ -1260,6 +1313,7 @@ const SETTING_ROWS = [
   ['precip',[['mm','mm'],['in','in']]],
   ['press',[['hpa','hPa'],['inhg','inHg']]],
   ['hour',[['auto','auto'],['12','h12'],['24','h24']]],
+  ['widget',[['auto','auto'],['on','on'],['off','off']]],
   ['anim',[[true,'on'],[false,'off']]]
 ];
 function renderSettings(){
@@ -1267,7 +1321,7 @@ function renderSettings(){
   $('setPanel').innerHTML = `<h2>${escapeHtml(t.title)}</h2>` +
     SETTING_ROWS.map(([k,opts]) => `<div class="srow"><div class="sl">${escapeHtml(t[k])}</div><div class="seg">` +
       opts.map(([v,lab]) => `<button type="button" data-k="${k}" data-v="${v}" class="${settings[k] === v ? 'on' : ''}">${escapeHtml(t[lab] || lab)}</button>`).join('') +
-      `</div>${k === 'level' ? `<div class="shint">${escapeHtml(t.lvHint)}</div>` : ''}</div>`).join('') +
+      `</div>${({level:'lvHint',widget:'wHint'})[k] ? `<div class="shint">${escapeHtml(t[({level:'lvHint',widget:'wHint'})[k]])}</div>` : ''}</div>`).join('') +
     `<div class="pfoot"><button type="button" id="setReset">${escapeHtml(t.reset)}</button><button type="button" id="setClose">${escapeHtml(t.close)}</button></div>`;
   $('setPanel').querySelectorAll('.seg button').forEach(b => b.addEventListener('click', () => {
     const k = b.dataset.k, row = SETTING_ROWS.find(r => r[0] === k), opt = row[1].find(o => String(o[0]) === b.dataset.v);
