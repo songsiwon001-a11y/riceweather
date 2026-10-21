@@ -343,7 +343,37 @@ function render(){
 
   if(!weatherPreviewActive) document.body.className = codeTheme(c.weather_code, c.is_day);
 
-  const title = [loc.name, loc.admin, loc.country].filter(Boolean).join(', ');
+  const countryNames = {
+  KR: '대한민국',
+  JP: '일본',
+  US: '미국',
+  CN: '중국',
+  GB: '영국',
+  FR: '프랑스',
+  DE: '독일',
+  CA: '캐나다',
+  AU: '호주',
+  IN: '인도',
+  SG: '싱가포르',
+  TW: '대만',
+  HK: '홍콩',
+  BR: '브라질',
+  RU: '러시아',
+  IT: '이탈리아',
+  ES: '스페인',
+  MX: '멕시코'
+};
+
+const parts = [loc.name, loc.admin]
+  .map(v => (v || '').trim())
+  .filter(Boolean)
+  .filter((v, i, arr) => arr.findIndex(
+    x => x.toLocaleLowerCase() === v.toLocaleLowerCase()
+  ) === i);
+
+const title = parts.length
+  ? parts.join(', ')
+  : (countryNames[loc.country] || loc.country || '');
   const todayHi = dy.temperature_2m_max[0], todayLo = dy.temperature_2m_min[0];
 
   // hourly: next 24 hours
