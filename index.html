@@ -871,15 +871,39 @@ function countryName(cc, fallback){
   try{ if(cc) return new Intl.DisplayNames([L().locale],{type:'region'}).of(cc.toUpperCase()) || fallback; }catch(e){}
   return fallback || '';
 }
+/* Open-Meteo는 2글자 검색어는 이름이 정확히 같아야만 찾고(3글자 이상부터 유사 검색), 한·중·일 이름은 3글자여도 접미사가 빠지면 못 찾습니다.
+   예) "서울"·"서울시" 0건 → "서울특별시"만 나옴. 그래서 언어별로 행정구역 접미사를 붙인 후보도 함께 검색해서 합칩니다. */
+const SUFFIX_SETS = [
+  { test:/[가-힣]/, strip:/(특별자치시|특별자치도|특별시|광역시|시|군|도)$/, add:['특별시','광역시','특별자치시','특별자치도','시','군','도'] },
+  { test:/[぀-ヿ]/, strip:/(都|道|府|県|市|区|町|村|郡)$/, add:['都','道','府','県','市','区','町','郡'] },   // 일본어(가나 포함)
+  { test:/[一-鿿]/, strip:/(特别行政区|自治区|省|市|县|縣|区|區|都|府|道|郡)$/, add:['市','省','县','區','区','都','府','道','縣','郡'] } // 한자(중국어·일본어)
+];
+const ALIASES = { la:'Los Angeles', ny:'New York', nyc:'New York', sf:'San Francisco', dc:'Washington', hk:'Hong Kong', kl:'Kuala Lumpur', bj:'Beijing', sh:'Shanghai', sg:'Singapore', ba:'Buenos Aires', rj:'Rio de Janeiro' };
+function searchVariants(v){
+  const out = [v];
+  for(const set of SUFFIX_SETS){
+    if(!set.test.test(v)) continue;
+    const base = v.replace(set.strip, '') || v;
+    if(base !== v) out.push(base);
+    set.add.forEach(sf => out.push(base + sf));
+    break;
+  }
+  const al = ALIASES[v.toLowerCase()];     // 2글자 영문 약칭(유사 검색 불가)
+  if(al) out.push(al);
+  return uniq(out).slice(0, 12);
+}
 async function doSearch(v){
   const box = $('results');
   try{
     const lang = activeLang();
     const count = settings.level === 'all' ? Math.max(settings.max, 10) : 100;
-    const res = await fetch('https://geocoding-api.open-meteo.com/v1/search?name='+encodeURIComponent(v)+'&count='+count+'&language='+lang);
-    const j = await res.json();
+    const lists = await Promise.all(searchVariants(v).map((q,qi) =>
+      fetch('https://geocoding-api.open-meteo.com/v1/search?name='+encodeURIComponent(q)+'&count='+(qi === 0 ? count : 20)+'&language='+lang)
+        .then(r => r.ok ? r.json() : {}).then(j => j.results || []).catch(() => [])));
     if($('q').value.trim() !== v) return;   // 그 사이 입력이 바뀌었으면 무시
-    const items = buildItems(j.results || []);
+    const seenIds = new Set(), merged = [];
+    lists.flat().forEach(r => { if(!seenIds.has(r.id)){ seenIds.add(r.id); merged.push(r); } });
+    const items = buildItems(merged);
     if(!items.length){ box.innerHTML = `<div>${escapeHtml(L().noResult)}</div>`; box.style.display='block'; return; }
     box.innerHTML = items.map((r,i)=>
       `<div data-i="${i}">${escapeHtml(r.label)} <small>${escapeHtml([...r.area, countryName(r.country_code, r.country)].filter(Boolean).join(', '))}</small></div>`).join('');
