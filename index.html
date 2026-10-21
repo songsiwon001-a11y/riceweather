@@ -92,6 +92,20 @@
   .status{text-align:center;padding:40px 0;opacity:.9}
   .note{text-align:center;font-size:.85rem;opacity:.8;margin-bottom:12px}
   footer{text-align:center;font-size:.75rem;opacity:.65;margin-top:20px}
+  #setBtn{padding:0 14px;justify-content:center}
+  .overlay{position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;padding:16px}
+  .overlay.open{display:flex}
+  .panel{width:100%;max-width:460px;max-height:86vh;overflow:auto;background:rgba(22,32,52,.94);border-radius:28px;padding:22px;box-shadow:0 20px 60px rgba(0,0,0,.45)}
+  .panel h2{font-size:1.15rem;opacity:1;margin-bottom:6px}
+  .srow{padding:12px 0;border-top:1px solid var(--line)}
+  .srow:first-of-type{border-top:0}
+  .srow .sl{font-size:.85rem;opacity:.8;margin-bottom:8px}
+  .seg{display:flex;flex-wrap:wrap;gap:6px}
+  .seg button{height:34px;padding:0 14px;font-size:.88rem;box-shadow:inset 0 0 0 1px rgba(255,255,255,.2);background:rgba(255,255,255,.08)}
+  .seg button.on{background:#fff;color:#16223a;font-weight:600;box-shadow:none}
+  .pfoot{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
+  .pfoot button{height:40px}
+  .shint{font-size:.78rem;opacity:.65;margin-top:6px;line-height:1.4}
   @media (max-width:520px){
     .tp{font-size:4rem}.ts{font-size:1.5rem}
     .top{flex-wrap:wrap}.search{flex:1 1 100%}
@@ -113,12 +127,15 @@
       <div class="results" id="results"></div>
     </div>
     <button id="locBtn"></button>
+    <button id="setBtn" type="button"></button>
     <select id="langSel"></select>
   </div>
   <div id="note" class="note"></div>
   <div id="app"><div class="status" id="status"></div></div>
   <footer id="foot">정보제공: MET Norway · Geocoding: Open-Meteo, BigDataCloud</footer>
 </div>
+
+<div class="overlay" id="setOverlay"><div class="panel" id="setPanel"></div></div>
 
 <script>
 /* ---------- i18n ---------- */
@@ -184,9 +201,15 @@ const COUNTRY_LANG = {
 };
 
 /* ---------- state ---------- */
-const DEFAULT_LOC = { lat:37.5665, lon:126.978, name:'서울', admin:'', country:'KR', tz:'Asia/Seoul' };
+const DEFAULT_LOC = { lat:37.5665, lon:126.978, name:'서울', admin:'', country:'KR', tz:'Asia/Seoul', id:1835848, nameLang:'ko' };
 let state = { loc:null, lang:'ko', manualLang:null, data:null };
 const $ = id => document.getElementById(id);
+
+/* ---------- settings ---------- */
+const SETTINGS_DEFAULT = { level:'city', max:8, temp:'auto', dual:true, wind:'kmh', precip:'mm', press:'hpa', hour:'auto', anim:true };
+let settings = Object.assign({}, SETTINGS_DEFAULT);
+try{ Object.assign(settings, JSON.parse(localStorage.getItem('weather_settings') || '{}')); }catch(e){}
+function saveSettings(){ try{ localStorage.setItem('weather_settings', JSON.stringify(settings)); }catch(e){} }
 
 function safeGet(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
 function safeSet(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
@@ -205,6 +228,8 @@ const hPaToInHg = h => h * 0.02953;
 /* 화씨를 주로 쓰는 나라는 화씨를 크게, 그 외는 섭씨를 크게 */
 const F_COUNTRIES = ['US','PR','GU','VI','AS','MP','BS','BZ','KY','LR','PW','FM','MH'];
 function primaryIsF(){
+  if(settings.temp === 'F') return true;
+  if(settings.temp === 'C') return false;
   const cc = ((state.loc && state.loc.country) || '').toUpperCase();
   if(cc) return F_COUNTRIES.includes(cc);
   const m = (navigator.language || '').split('-')[1];
@@ -212,14 +237,31 @@ function primaryIsF(){
 }
 function tp(c){
   const C = `${r0(c)}°C`, F = `${r0(cToF(c))}°F`;
-  return primaryIsF() ? {main:F, sub:C} : {main:C, sub:F};
+  const o = primaryIsF() ? {main:F, sub:C} : {main:C, sub:F};
+  if(!settings.dual) o.sub = '';
+  return o;
 }
-function dual(c){ const t = tp(c); return `${t.main} / ${t.sub}`; }
+function dual(c){ const t = tp(c); return t.sub ? `${t.main} / ${t.sub}` : t.main; }
+function withSub(main, sub){ return settings.dual ? `${main} <small>/ ${sub}</small>` : main; }
+function precipStr(mm){
+  const a = `${r1(mm)} mm`, b = `${Math.round(mmToIn(mm)*100)/100} in`;
+  return settings.precip === 'in' ? withSub(b, a) : withSub(a, b);
+}
+function precipMain(mm){ return settings.precip === 'in' ? `${Math.round(mmToIn(mm)*100)/100}in` : `${r1(mm)}mm`; }
+function windStr(kmh){
+  const v = { kmh:`${r0(kmh)} km/h`, mph:`${r0(kmhToMph(kmh))} mph`, ms:`${r1(kmh/3.6)} m/s` };
+  const u = v[settings.wind] ? settings.wind : 'kmh';
+  return withSub(v[u], u === 'kmh' ? v.mph : v.kmh);
+}
+function pressStr(h){
+  const a = `${r0(h)} hPa`, b = `${r1(hPaToInHg(h))} inHg`;
+  return settings.press === 'inhg' ? withSub(b, a) : withSub(a, b);
+}
 function hiLo(hi, lo){
   const F = primaryIsF();
   const a = F?cToF(hi):hi, b = F?cToF(lo):lo, a2 = F?hi:cToF(hi), b2 = F?lo:cToF(lo);
   const u1 = F?'°F':'°C', u2 = F?'°C':'°F';
-  return { main:`${r0(a)}° / ${r0(b)}${u1}`, sub:`${r0(a2)}° / ${r0(b2)}${u2}` };
+  return { main:`${r0(a)}° / ${r0(b)}${u1}`, sub: settings.dual ? `${r0(a2)}° / ${r0(b2)}${u2}` : '' };
 }
 
 function degToDir(d){
@@ -316,6 +358,8 @@ function applyStaticText(){
   sel.innerHTML = `<option value="auto">🌐 ${t.auto}</option>` +
     Object.keys(I18N).map(k=>`<option value="${k}">${I18N[k].name}</option>`).join('');
   sel.value = cur;
+  const sb = $('setBtn'); if(sb){ const tt = (S18N[activeLang()] || S18N.en).title; sb.title = tt; sb.setAttribute('aria-label', tt); }
+  const ov = $('setOverlay'); if(ov && ov.classList.contains('open')) renderSettings();
 }
 
 /* ---------- date helpers (string based, location-local) ---------- */
@@ -325,14 +369,15 @@ function parseLocal(s){ // "YYYY-MM-DDTHH:mm" or "YYYY-MM-DD"
   const [h,mi] = t.split(':').map(Number);
   return new Date(Date.UTC(y,m-1,dd,h,mi));
 }
+function hourOpt(){ return settings.hour === '24' ? {hourCycle:'h23'} : settings.hour === '12' ? {hourCycle:'h12'} : {}; }
 function fmtDay(s){
   return new Intl.DateTimeFormat(L().locale,{weekday:'short',month:'short',day:'numeric',timeZone:'UTC'}).format(parseLocal(s));
 }
 function fmtTime(s){
-  return new Intl.DateTimeFormat(L().locale,{hour:'numeric',minute:'2-digit',timeZone:'UTC'}).format(parseLocal(s));
+  return new Intl.DateTimeFormat(L().locale,{hour:'numeric',minute:'2-digit',timeZone:'UTC',...hourOpt()}).format(parseLocal(s));
 }
 function fmtHour(s){
-  return new Intl.DateTimeFormat(L().locale,{hour:'numeric',timeZone:'UTC'}).format(parseLocal(s));
+  return new Intl.DateTimeFormat(L().locale,{hour:'numeric',timeZone:'UTC',...hourOpt()}).format(parseLocal(s));
 }
 
 /* ---------- rendering ---------- */
@@ -373,7 +418,7 @@ const parts = [loc.name, loc.admin]
 
 const title = parts.length
   ? parts.join(', ')
-  : (countryNames[loc.country] || loc.country || '');
+  : (countryName(loc.country, countryNames[loc.country] || loc.country || ''));
   const todayHi = dy.temperature_2m_max[0], todayLo = dy.temperature_2m_min[0];
 
   // hourly: next 24 hours
@@ -388,7 +433,7 @@ const title = parts.length
       <div class="i">${codeIcon(h.weather_code[i], isDay)}</div>
       <div class="c">${tp(h.temperature_2m[i]).main}</div>
       <div class="f">${tp(h.temperature_2m[i]).sub}</div>
-      <div class="p">💧${r1(h.precipitation[i] ?? 0)}mm</div>
+      <div class="p">💧${precipMain(h.precipitation[i] ?? 0)}</div>
     </div>`;
   }
 
@@ -398,7 +443,7 @@ const title = parts.length
     dailyHtml += `<div class="day">
       <div class="n">${i===0 ? t.today : fmtDay(dy.time[i])}</div>
       <div class="i">${codeIcon(dy.weather_code[i],1)}</div>
-      <div class="d">${descOf(dy.weather_code[i])}<br>💧 ${r1(ps)} mm / ${Math.round(mmToIn(ps)*100)/100} in</div>
+      <div class="d">${descOf(dy.weather_code[i])}<br>💧 ${precipStr(ps)}</div>
       <div class="r">${hiLo(dy.temperature_2m_max[i], dy.temperature_2m_min[i]).main}<br><small>${hiLo(dy.temperature_2m_max[i], dy.temperature_2m_min[i]).sub}</small></div>
     </div>`;
   }
@@ -420,10 +465,10 @@ const title = parts.length
       <div class="grid">
         <div class="stat"><div class="k">${t.feels}</div><div class="v">${dual(c.apparent_temperature)}</div></div>
         <div class="stat"><div class="k">${t.humidity}</div><div class="v">${c.relative_humidity_2m}%</div></div>
-        <div class="stat"><div class="k">${t.now} ${t.precip}</div><div class="v">${r1(prec)} mm <small>/ ${(Math.round(mmToIn(prec)*100)/100)} in</small></div></div>
-        <div class="stat"><div class="k">${t.today} ${t.precip}</div><div class="v">${r1(dy.precipitation_sum[0] ?? 0)} mm <small>/ ${Math.round(mmToIn(dy.precipitation_sum[0] ?? 0)*100)/100} in</small></div></div>
-        <div class="stat"><div class="k">${t.wind}</div><div class="v">${r0(c.wind_speed_10m)} km/h <small>/ ${r0(kmhToMph(c.wind_speed_10m))} mph${dirTxt}</small></div></div>
-        <div class="stat"><div class="k">${t.pressure}</div><div class="v">${r0(c.pressure_msl)} hPa <small>/ ${r1(hPaToInHg(c.pressure_msl))} inHg</small></div></div>
+        <div class="stat"><div class="k">${t.now} ${t.precip}</div><div class="v">${precipStr(prec)}</div></div>
+        <div class="stat"><div class="k">${t.today} ${t.precip}</div><div class="v">${precipStr(dy.precipitation_sum[0] ?? 0)}</div></div>
+        <div class="stat"><div class="k">${t.wind}</div><div class="v">${windStr(c.wind_speed_10m)}${dirTxt}</div></div>
+        <div class="stat"><div class="k">${t.pressure}</div><div class="v">${pressStr(c.pressure_msl)}</div></div>
         <div class="stat"><div class="k">${t.clouds}</div><div class="v">${c.cloud_cover}%</div></div>
         <div class="stat"><div class="k">${t.uv}</div><div class="v">${r1(dy.uv_index_max[0] ?? 0)}</div></div>
         <div class="stat"><div class="k">🌅 ${t.sunrise}</div><div class="v">${fmtTime(dy.sunrise[0])}</div></div>
@@ -642,6 +687,29 @@ async function reverseGeocode(lat, lon, lang){
   return res.json();
 }
 
+/* 현재 선택된 언어로 지역 이름을 다시 가져옵니다 (검색 결과·내 위치·언어 변경 모두 공통) */
+async function localizeLoc(){
+  const loc = state.loc; if(!loc) return;
+  const lang = activeLang();
+  if(loc.nameLang === lang) return;
+  try{
+    if(loc.id){
+      const res = await fetch('https://geocoding-api.open-meteo.com/v1/get?id='+loc.id+'&language='+lang);
+      if(res.ok){
+        const r = await res.json();
+        const nk = loc.nameKey || 'name', ak = loc.areaKeys || ['admin1'];
+        const nm = r && r[nk];
+        if(nm){ loc.name = nm; loc.admin = uniq(ak.map(k => r[k]).filter(v => v && v !== nm)).join(', '); }
+      }
+    } else {
+      const g = await reverseGeocode(loc.lat, loc.lon, lang);
+      const nm = g.city || g.locality || g.principalSubdivision;
+      if(nm){ loc.name = nm; loc.admin = (g.city || g.locality) ? (g.principalSubdivision || '') : ''; }
+    }
+    loc.nameLang = lang;
+  }catch(e){ console.warn('Localizing location name failed', e); }
+}
+
 async function loadLocation(loc, opts={}){
   state.loc = loc;
   state.lang = langForCountry(loc.country);
@@ -649,6 +717,7 @@ async function loadLocation(loc, opts={}){
   setStatus(L().loading);
   setNote(opts.note || '');
   try{
+    await localizeLoc();
     state.data = await fetchWeather();
     render();
     updateScene();
@@ -733,21 +802,68 @@ $('q').addEventListener('input', e=>{
   if(v.length<2){ $('results').style.display='none'; return; }
   searchTimer = setTimeout(()=>doSearch(v), 300);
 });
+/* 검색 범위(설정): city = 시·군, district = 구 포함, all = 읍·면·동 등 전체
+   Open-Meteo(GeoNames)는 구·동을 별도 분류 코드로 구분하지 않아서, 이름(…구/…区/…-gu)과 행정구역 필드로 판별합니다. */
+const GU_RE = /(구|区|[-\s]gu)$/i;
+const sameName = (a,b) => !!a && !!b && String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
+const uniq = a => a.filter((v,i) => v && a.indexOf(v) === i);
+const byPop = (a,b) => (b.population || 0) - (a.population || 0);
+function isCityRec(r){
+  if(GU_RE.test(r.name || '')) return false;
+  return /^(PPLC|PPLA|PPLA2)$/.test(r.feature_code || '') || sameName(r.name, r.admin2);
+}
+function isGuRec(r){
+  return GU_RE.test(r.name || '') && (/^(PPLA2|PPLA3)$/.test(r.feature_code || '') || sameName(r.name, r.admin2) || sameName(r.name, r.admin3));
+}
+function buildItems(list){
+  const lv = settings.level, out = [], seen = new Set();
+  const mk = (r, nameKey, areaKeys) => Object.assign({}, r, {
+    nameKey, areaKeys, label: r[nameKey],
+    area: uniq(areaKeys.map(k => r[k]).filter(v => v && v !== r[nameKey]))
+  });
+  const add = it => {
+    const key = [it.country_code, it.admin1, it.admin2, it.label].join('|').toLowerCase();
+    if(!seen.has(key)){ seen.add(key); out.push(it); }
+  };
+  if(lv === 'all'){
+    list.forEach(r => add(mk(r, 'name', ['admin2','admin1'])));
+    return out.slice(0, settings.max);
+  }
+  const sorted = list.slice().sort(byPop);
+  sorted.forEach(r => { if(isCityRec(r)) add(mk(r, 'name', ['admin1'])); });
+  if(lv === 'district'){
+    sorted.forEach(r => {
+      if(isCityRec(r)) return;
+      if(isGuRec(r)) add(mk(r, 'name', ['admin2','admin1']));
+      else if(GU_RE.test(r.admin2 || '')) add(mk(r, 'admin2', ['admin1']));       // 서울 등: 동 → 소속 구
+      else if(GU_RE.test(r.admin3 || '')) add(mk(r, 'admin3', ['admin2','admin1'])); // 청주시 서원구 등
+    });
+  }
+  return out.slice(0, settings.max);
+}
+function countryName(cc, fallback){
+  try{ if(cc) return new Intl.DisplayNames([L().locale],{type:'region'}).of(cc.toUpperCase()) || fallback; }catch(e){}
+  return fallback || '';
+}
 async function doSearch(v){
   const box = $('results');
   try{
-    const res = await fetch('https://geocoding-api.open-meteo.com/v1/search?name='+encodeURIComponent(v)+'&count=6&language='+activeLang());
+    const lang = activeLang();
+    const count = settings.level === 'all' ? Math.max(settings.max, 10) : 100;
+    const res = await fetch('https://geocoding-api.open-meteo.com/v1/search?name='+encodeURIComponent(v)+'&count='+count+'&language='+lang);
     const j = await res.json();
-    const items = j.results || [];
+    if($('q').value.trim() !== v) return;   // 그 사이 입력이 바뀌었으면 무시
+    const items = buildItems(j.results || []);
     if(!items.length){ box.innerHTML = `<div>${escapeHtml(L().noResult)}</div>`; box.style.display='block'; return; }
     box.innerHTML = items.map((r,i)=>
-      `<div data-i="${i}">${escapeHtml(r.name)} <small>${escapeHtml([r.admin1,r.country].filter(Boolean).join(', '))}</small></div>`).join('');
+      `<div data-i="${i}">${escapeHtml(r.label)} <small>${escapeHtml([...r.area, countryName(r.country_code, r.country)].filter(Boolean).join(', '))}</small></div>`).join('');
     box.style.display='block';
     box.querySelectorAll('div').forEach(el=>{
       el.addEventListener('click',()=>{
         const r = items[+el.dataset.i]; if(!r) return;
         box.style.display='none'; $('q').value='';
-        loadLocation({ lat:r.latitude, lon:r.longitude, name:r.name, admin:r.admin1||'', country:r.country_code||'', tz:r.timezone||browserTz() });
+        loadLocation({ lat:r.latitude, lon:r.longitude, name:r.label, admin:r.area.join(', '), country:r.country_code||'', tz:r.timezone||browserTz(),
+                       id:r.id, nameLang:lang, nameKey:r.nameKey, areaKeys:r.areaKeys });
       });
     });
   }catch(e){ box.style.display='none'; }
@@ -1109,7 +1225,7 @@ let lastTs = 0, lastTick = 0;
 function frame(ts){
   requestAnimationFrame(frame);
   if(document.hidden || bg.style.display === 'none'){ lastTs = ts; return; }
-  const dt = reduceMotion ? 0 : Math.min((ts - lastTs)/1000 || 0, .05);
+  const dt = (reduceMotion || !settings.anim) ? 0 : Math.min((ts - lastTs)/1000 || 0, .05);
   lastTs = ts; scene.t += dt;
   if(ts - lastTick > 1000){ lastTick = ts; updateSun(); refreshTint(); }
   drawSky(); drawCelestial(); drawStars(dt); drawClouds(dt);
@@ -1123,6 +1239,57 @@ window.addEventListener('resize', ()=>{
 });
 resizeBg(); buildScene(); bg.style.opacity = '1'; requestAnimationFrame(frame);
 
+/* ---------- settings panel ---------- */
+const S18N = {
+  ko:{title:'설정',level:'검색 범위',lvCity:'시·군',lvDist:'구 포함',lvAll:'읍·면·동 포함 (전체)',
+      lvHint:'구 포함: 서울 같은 곳은 동 단위 결과를 소속 구로 묶어 보여줍니다. 지역 데이터에 따라 일부 구는 빠질 수 있어요.',
+      max:'검색 결과 수',temp:'온도 단위',auto:'자동',dual:'보조 단위 함께 표시',on:'켜기',off:'끄기',
+      wind:'풍속 단위',precip:'강수량 단위',press:'기압 단위',hour:'시간 표기',h12:'12시간',h24:'24시간',anim:'배경 애니메이션',reset:'초기화',close:'닫기'},
+  en:{title:'Settings',level:'Search scope',lvCity:'Cities / counties',lvDist:'Include districts',lvAll:'Everything (incl. towns)',
+      lvHint:'Districts: neighborhood results are grouped under their district (e.g. in Seoul). Some districts may be missing depending on the data.',
+      max:'Number of results',temp:'Temperature unit',auto:'Auto',dual:'Show secondary units',on:'On',off:'Off',
+      wind:'Wind unit',precip:'Precipitation unit',press:'Pressure unit',hour:'Time format',h12:'12-hour',h24:'24-hour',anim:'Background animation',reset:'Reset',close:'Close'}
+};
+const SL = () => S18N[activeLang()] || S18N.en;
+const SETTING_ROWS = [
+  ['level',[['city','lvCity'],['district','lvDist'],['all','lvAll']]],
+  ['max',[[5,'5'],[8,'8'],[12,'12'],[20,'20']]],
+  ['temp',[['auto','auto'],['C','°C'],['F','°F']]],
+  ['dual',[[true,'on'],[false,'off']]],
+  ['wind',[['kmh','km/h'],['mph','mph'],['ms','m/s']]],
+  ['precip',[['mm','mm'],['in','in']]],
+  ['press',[['hpa','hPa'],['inhg','inHg']]],
+  ['hour',[['auto','auto'],['12','h12'],['24','h24']]],
+  ['anim',[[true,'on'],[false,'off']]]
+];
+function renderSettings(){
+  const t = SL();
+  $('setPanel').innerHTML = `<h2>${escapeHtml(t.title)}</h2>` +
+    SETTING_ROWS.map(([k,opts]) => `<div class="srow"><div class="sl">${escapeHtml(t[k])}</div><div class="seg">` +
+      opts.map(([v,lab]) => `<button type="button" data-k="${k}" data-v="${v}" class="${settings[k] === v ? 'on' : ''}">${escapeHtml(t[lab] || lab)}</button>`).join('') +
+      `</div>${k === 'level' ? `<div class="shint">${escapeHtml(t.lvHint)}</div>` : ''}</div>`).join('') +
+    `<div class="pfoot"><button type="button" id="setReset">${escapeHtml(t.reset)}</button><button type="button" id="setClose">${escapeHtml(t.close)}</button></div>`;
+  $('setPanel').querySelectorAll('.seg button').forEach(b => b.addEventListener('click', () => {
+    const k = b.dataset.k, row = SETTING_ROWS.find(r => r[0] === k), opt = row[1].find(o => String(o[0]) === b.dataset.v);
+    settings[k] = opt[0]; saveSettings(); renderSettings(); applySettings(k);
+  }));
+  $('setReset').addEventListener('click', () => { settings = Object.assign({}, SETTINGS_DEFAULT); saveSettings(); renderSettings(); applySettings(); });
+  $('setClose').addEventListener('click', closeSettings);
+}
+function applySettings(k){
+  if(state.data) render();
+  if(!k || k === 'level' || k === 'max'){
+    const v = $('q').value.trim();
+    if(v.length >= 2) doSearch(v); else $('results').style.display = 'none';
+  }
+}
+function openSettings(){ renderSettings(); $('setOverlay').classList.add('open'); }
+function closeSettings(){ $('setOverlay').classList.remove('open'); }
+$('setBtn').innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>';
+$('setBtn').addEventListener('click', openSettings);
+$('setOverlay').addEventListener('click', e => { if(e.target === $('setOverlay')) closeSettings(); });
+document.addEventListener('keydown', e => { if(e.key === 'Escape') closeSettings(); });
+
 /* ---------- events ---------- */
 $('locBtn').addEventListener('click', locate);
 $('langSel').addEventListener('change', e=>{
@@ -1131,6 +1298,8 @@ $('langSel').addEventListener('change', e=>{
   safeSet('weather_lang', v);
   applyStaticText();
   if(state.data) render();
+  const cur = state.loc;
+  localizeLoc().then(()=>{ if(state.loc === cur && state.data) render(); });
 });
 
 /* ---------- init ---------- */
