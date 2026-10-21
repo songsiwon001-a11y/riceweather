@@ -96,7 +96,8 @@
   .status{text-align:center;padding:40px 0;opacity:.9}
   .note{text-align:center;font-size:.85rem;opacity:.8;margin-bottom:12px}
   footer{text-align:center;font-size:.75rem;opacity:.65;margin-top:20px}
-  #setBtn{padding:0 14px;justify-content:center}
+  #setBtn,#pipBtn{padding:0 14px;justify-content:center}
+  #pipBtn.on{background:#fff;color:#16223a}
   /* 상단 미니 위젯: 아이폰(다이나믹 아일랜드 위치) / 갤럭시(왼쪽 위) */
   #miniW{position:fixed;z-index:40;display:none;align-items:center;gap:8px;height:37px;padding:0 14px;border-radius:999px;
     background:rgba(0,0,0,.72);color:#fff;font-weight:600;font-size:.9rem;white-space:nowrap;text-shadow:none;
@@ -143,6 +144,7 @@
       <div class="results" id="results"></div>
     </div>
     <button id="locBtn"></button>
+    <button id="pipBtn" type="button"></button>
     <button id="setBtn" type="button"></button>
     <select id="langSel"></select>
   </div>
@@ -376,6 +378,7 @@ function applyStaticText(){
     Object.keys(I18N).map(k=>`<option value="${k}">${I18N[k].name}</option>`).join('');
   sel.value = cur;
   const sb = $('setBtn'); if(sb){ const tt = (S18N[activeLang()] || S18N.en).title; sb.title = tt; sb.setAttribute('aria-label', tt); }
+  const pb = $('pipBtn'); if(pb){ const pt = (S18N[activeLang()] || S18N.en).pip; pb.title = pt; pb.setAttribute('aria-label', pt); }
   const ov = $('setOverlay'); if(ov && ov.classList.contains('open')) renderSettings();
 }
 
@@ -728,6 +731,10 @@ async function localizeLoc(){
   }catch(e){ console.warn('Localizing location name failed', e); }
 }
 
+function saveLoc(loc){ safeSet('weather_loc', JSON.stringify(loc)); }
+function savedLoc(){
+  try{ const o = JSON.parse(safeGet('weather_loc') || 'null'); return o && Number.isFinite(o.lat) && Number.isFinite(o.lon) ? o : null; }catch(e){ return null; }
+}
 async function loadLocation(loc, opts={}){
   state.loc = loc;
   state.lang = langForCountry(loc.country);
@@ -736,6 +743,7 @@ async function loadLocation(loc, opts={}){
   setNote(opts.note || '');
   try{
     await localizeLoc();
+    if(opts.save) saveLoc(loc);
     state.data = await fetchWeather();
     render();
     updateScene();
@@ -881,7 +889,7 @@ async function doSearch(v){
         const r = items[+el.dataset.i]; if(!r) return;
         box.style.display='none'; $('q').value='';
         loadLocation({ lat:r.latitude, lon:r.longitude, name:r.label, admin:r.area.join(', '), country:r.country_code||'', tz:r.timezone||browserTz(),
-                       id:r.id, nameLang:lang, nameKey:r.nameKey, areaKeys:r.areaKeys });
+                       id:r.id, nameLang:lang, nameKey:r.nameKey, areaKeys:r.areaKeys }, {save:true});
       });
     });
   }catch(e){ box.style.display='none'; }
@@ -1277,6 +1285,7 @@ function miniMode(){
   return settings.widget === 'on' ? 'topleft' : null;
 }
 function updateMini(){
+  if(typeof pip !== 'undefined' && pip.on) pipDraw();
   const el = $('miniW'), d = state.data, mode = d ? miniMode() : null;
   document.body.classList.remove('mini-island','mini-flow');
   if(!mode){ el.style.display = 'none'; return; }
@@ -1290,14 +1299,76 @@ function updateMini(){
 }
 window.addEventListener('orientationchange', () => setTimeout(updateMini, 300));
 
+/* ---------- PiP (떠 있는 작은 창) ----------
+   날씨 카드를 canvas에 그려 video로 만든 뒤 Picture-in-Picture로 띄웁니다.
+   데스크톱·안드로이드 크롬·iOS 사파리에서 쓸 수 있고, 다른 앱으로 이동해도 작은 창이 남습니다.
+   (브라우저/페이지를 완전히 종료하면 사라집니다.) */
+const pip = { cv:null, ctx:null, vid:null, on:false, timer:null };
+function pipSupported(){
+  const v = document.createElement('video');
+  return !!((document.pictureInPictureEnabled && v.requestPictureInPicture) || typeof v.webkitSetPresentationMode === 'function');
+}
+function pipDraw(){
+  if(!pip.cv) return;
+  const x = pip.ctx, w = pip.cv.width, h = pip.cv.height, d = state.data, t = L();
+  const [a,b,c2] = skyColors();
+  const g = x.createLinearGradient(0,0,0,h);
+  g.addColorStop(0,a); g.addColorStop(.55,b); g.addColorStop(1,c2);
+  x.fillStyle = g; x.fillRect(0,0,w,h);
+  x.fillStyle = 'rgba(0,0,0,.28)'; x.fillRect(0,0,w,h);
+  if(!d){ x.fillStyle = '#fff'; x.font = '600 36px sans-serif'; x.fillText(t.loading, 30, 130); return; }
+  const cur = d.current, dy = d.daily, loc = state.loc || {};
+  const font = '"Figtree","Noto Sans KR","Noto Sans JP","Noto Sans SC","Noto Sans",-apple-system,"Segoe UI",Roboto,sans-serif';
+  x.fillStyle = '#fff'; x.textBaseline = 'alphabetic';
+  x.font = '96px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif';
+  x.fillText(codeIcon(cur.weather_code, cur.is_day), 24, 130);
+  x.font = '600 96px ' + font; x.fillText(tp(cur.temperature_2m).main, 160, 118);
+  x.font = '500 30px ' + font; x.fillText(descOf(cur.weather_code), 164, 166);
+  x.font = '600 30px ' + font; x.fillText(loc.name || '', 28, 214);
+  x.textAlign = 'right'; x.font = '500 28px ' + font;
+  x.fillText(t.high + ' ' + tp(dy.temperature_2m_max[0]).main + '  ' + t.low + ' ' + tp(dy.temperature_2m_min[0]).main, w - 24, 214);
+  x.textAlign = 'left';
+}
+async function togglePip(){
+  try{
+    if(document.pictureInPictureElement){ await document.exitPictureInPicture(); return; }
+    if(pip.vid && pip.vid.webkitPresentationMode === 'picture-in-picture'){ pip.vid.webkitSetPresentationMode('inline'); return; }
+    if(!pip.cv){
+      pip.cv = document.createElement('canvas'); pip.cv.width = 640; pip.cv.height = 240; pip.ctx = pip.cv.getContext('2d');
+      pip.vid = document.createElement('video');
+      pip.vid.muted = true; pip.vid.playsInline = true; pip.vid.setAttribute('playsinline',''); pip.vid.setAttribute('muted','');
+      pip.vid.style.cssText = 'position:fixed;left:0;top:0;width:2px;height:2px;opacity:0;pointer-events:none';
+      document.body.appendChild(pip.vid);
+      pip.vid.addEventListener('leavepictureinpicture', pipStopped);
+      pip.vid.addEventListener('webkitpresentationmodechanged', () => { if(pip.vid.webkitPresentationMode !== 'picture-in-picture') pipStopped(); });
+    }
+    pip.on = true; pipDraw();
+    if(!pip.vid.srcObject) pip.vid.srcObject = pip.cv.captureStream(5);
+    await pip.vid.play();
+    if(pip.vid.requestPictureInPicture) await pip.vid.requestPictureInPicture();
+    else pip.vid.webkitSetPresentationMode('picture-in-picture');
+    $('pipBtn').classList.add('on');
+    clearInterval(pip.timer); pip.timer = setInterval(pipDraw, 1000);   // 프레임을 계속 갱신
+  }catch(e){
+    console.warn('PiP failed', e); pipStopped();
+    setNote(activeLang() === 'ko' ? '이 브라우저에서는 PiP를 시작할 수 없습니다.' : 'Could not start Picture-in-Picture in this browser.');
+  }
+}
+function pipStopped(){
+  pip.on = false; clearInterval(pip.timer); pip.timer = null;
+  $('pipBtn').classList.remove('on');
+}
+$('pipBtn').innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><rect x="12" y="11" width="7" height="5" rx="1" fill="currentColor"/></svg>';
+if(pipSupported()) $('pipBtn').addEventListener('click', togglePip); else $('pipBtn').style.display = 'none';
+
 /* ---------- settings panel ---------- */
 const S18N = {
-  ko:{title:'설정',level:'검색 범위',lvCity:'시·군',lvDist:'구 포함',lvAll:'읍·면·동 포함 (전체)',widget:'상단 미니 위젯',
+  ko:{title:'설정',level:'검색 범위',lvCity:'시·군',lvDist:'구 포함',lvAll:'읍·면·동 포함 (전체)',widget:'상단 미니 위젯',pip:'떠 있는 작은 창 (PiP)',
       wHint:'아이폰은 카메라(다이나믹 아일랜드) 위치에, 갤럭시는 왼쪽 위에 현재 날씨가 표시됩니다. 자동은 아이폰·갤럭시에서만 켜지고, 켜기는 PC 등에서도 왼쪽 위에 표시해요. 홈 화면에 추가한 앱으로 열면 상태바 영역까지 자연스럽게 보입니다.',
       lvHint:'구 포함: 서울 같은 곳은 동 단위 결과를 소속 구로 묶어 보여줍니다. 지역 데이터에 따라 일부 구는 빠질 수 있어요.',
       max:'검색 결과 수',temp:'온도 단위',auto:'자동',dual:'보조 단위 함께 표시',on:'켜기',off:'끄기',
       wind:'풍속 단위',precip:'강수량 단위',press:'기압 단위',hour:'시간 표기',h12:'12시간',h24:'24시간',anim:'배경 애니메이션',reset:'초기화',close:'닫기'},
-  en:{title:'Settings',level:'Search scope',lvCity:'Cities / counties',lvDist:'Include districts',lvAll:'Everything (incl. towns)',widget:'Top mini widget',
+  en:{title:'Settings',level:'Search scope',lvCity:'Cities / counties',lvDist:'Include districts',lvAll:'Everything (incl. towns)',widget:'Top mini widget',pip:'Floating mini window (PiP)',
       wHint:'Shows the current weather at the camera cutout (Dynamic Island) on iPhone and at the top-left on Galaxy. Auto only turns on for iPhone/Galaxy; On also shows it at the top-left elsewhere. Works best when opened from the Home Screen.',
       lvHint:'Districts: neighborhood results are grouped under their district (e.g. in Seoul). Some districts may be missing depending on the data.',
       max:'Number of results',temp:'Temperature unit',auto:'Auto',dual:'Show secondary units',on:'On',off:'Off',
@@ -1345,7 +1416,7 @@ $('setOverlay').addEventListener('click', e => { if(e.target === $('setOverlay')
 document.addEventListener('keydown', e => { if(e.key === 'Escape') closeSettings(); });
 
 /* ---------- events ---------- */
-$('locBtn').addEventListener('click', locate);
+$('locBtn').addEventListener('click', () => { try{ localStorage.removeItem('weather_loc'); }catch(e){} locate(); });
 $('langSel').addEventListener('change', e=>{
   const v = e.target.value;
   state.manualLang = v==='auto' ? null : v;
@@ -1364,7 +1435,8 @@ $('langSel').addEventListener('change', e=>{
   if(!window.isSecureContext && location.protocol !== 'file:') {
     setNote(state.manualLang === 'en' ? 'Location access usually requires HTTPS or localhost.' : '정확한 위치 권한은 HTTPS 또는 localhost에서 더 잘 작동합니다.');
   }
-  locate();
+  const sl = savedLoc();
+  if(sl) loadLocation(sl, {save:true}); else locate();
 })();
 </script>
 </body>
