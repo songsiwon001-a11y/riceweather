@@ -714,10 +714,71 @@ async function reverseGeocode(lat, lon, lang){
 }
 
 /* 현재 선택된 언어로 지역 이름을 다시 가져옵니다 (검색 결과·내 위치·언어 변경 모두 공통) */
+/* 선택한 언어의 문자가 하나도 없는 이름은 "번역 안 된 이름"으로 봅니다. (한·일·중·러 대상. 라틴 문자 언어는 판별 불가) */
+const SCRIPT_RE = { ko:/[가-힣]/, ja:/[぀-ヿ一-鿿]/, zh:/[一-鿿]/, ru:/[Ѐ-ӿ]/ };
+function untranslated(str, lang){
+  const re = SCRIPT_RE[lang];
+  return !!(re && str && /[A-Za-z]/.test(str) && !re.test(str));
+}
+/* Nominatim(OpenStreetMap): 지명을 요청 언어(accept-language)로 돌려주고 Open-Meteo가 못 찾는 도시도 찾아줍니다. */
+const NOM = 'https://nominatim.openstreetmap.org';
+async function nomSearch(q, lang, limit, cc){
+  const u = NOM+'/search?format=jsonv2&addressdetails=1&limit='+limit+'&accept-language='+encodeURIComponent(lang)+
+            '&q='+encodeURIComponent(q)+(cc ? '&countrycodes='+encodeURIComponent(cc.toLowerCase()) : '');
+  const res = await fetch(u);
+  if(!res.ok) throw new Error('nominatim http '+res.status);
+  return res.json();
+}
+function nomToItem(r){
+  const a = r.address || {};
+  const first = (r.display_name || '').split(',')[0].trim();
+  const nm = r.name || a.city || a.town || a.village || a.municipality || a.city_district || a.suburb || a.county || first;
+  const st = a.state || a.province || a.region || '';
+  return {
+    label: nm, nameKey:'name', areaKeys:['admin1'], area: uniq([st].filter(v => v && v !== nm)),
+    latitude: +r.lat, longitude: +r.lon, country_code: (a.country_code || '').toUpperCase(), country: a.country || '',
+    kind: r.addresstype || r.type || '', category: r.category || '', src:'nom'
+  };
+}
+async function nomLookup(name, lat, lon, lang, cc){
+  const list = await nomSearch(name, lang, 8, cc);
+  let best = null, bd = .4;
+  for(const r of list){
+    const d = Math.hypot(+r.lat - lat, +r.lon - lon);
+    if(d < bd){ bd = d; best = r; }
+  }
+  return best ? nomToItem(best) : null;
+}
+async function tzFor(lat, lon){
+  try{
+    const res = await fetch('https://api.open-meteo.com/v1/forecast?latitude='+lat+'&longitude='+lon+'&current=temperature_2m&forecast_days=1&timezone=auto');
+    if(res.ok){ const j = await res.json(); if(j && j.timezone) return j.timezone; }
+  }catch(e){}
+  return browserTz();
+}
+/* Open-Meteo에 번역이 없어서 원어(영문 등) 그대로 남은 지명을 Nominatim으로 보완 */
+async function fixUntranslated(loc, lang){
+  if(loc.xlLang === lang) return;
+  const adminBad = !!loc.admin && loc.admin.split(', ').some(p => untranslated(p, lang));
+  const nameBad = untranslated(loc.name, lang);
+  if(!nameBad && !adminBad) return;
+  loc.xlLang = lang;
+  try{
+    const hit = await nomLookup(loc.name, loc.lat, loc.lon, lang, loc.country);
+    if(!hit) return;
+    if(nameBad && hit.label && !untranslated(hit.label, lang)) loc.name = hit.label;
+    const ha = hit.area.join(', ');
+    if(adminBad && ha && !untranslated(ha, lang)) loc.admin = ha;
+  }catch(e){ console.warn('Nominatim translation fallback failed', e); }
+}
+
 async function localizeLoc(){
   const loc = state.loc; if(!loc) return;
   const lang = activeLang();
-  if(loc.nameLang === lang) return;
+  if(loc.nameLang !== lang){ loc.xlLang = null; await localizeFromApis(loc, lang); }
+  await fixUntranslated(loc, lang);
+}
+async function localizeFromApis(loc, lang){
   try{
     if(loc.id){
       const res = await fetch('https://geocoding-api.open-meteo.com/v1/get?id='+loc.id+'&language='+lang);
@@ -840,14 +901,20 @@ const GU_RE = /(구|区|[-\s]gu)$/i;
 const sameName = (a,b) => !!a && !!b && String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
 const uniq = a => a.filter((v,i) => v && a.indexOf(v) === i);
 const byPop = (a,b) => (b.population || 0) - (a.population || 0);
+/* 한국의 동·읍·면·리는 '전체' 범위에서만 보여줍니다 */
+const KR_SUB_RE = /(동|읍|면|리)$|[-\s](dong|eup|myeon|ri)$/i;
 function isCityRec(r){
   if(GU_RE.test(r.name || '')) return false;
-  return /^(PPLC|PPLA|PPLA2)$/.test(r.feature_code || '') || sameName(r.name, r.admin2);
+  if(r.country_code === 'KR' && KR_SUB_RE.test(r.name || '')) return false;
+  const fc = r.feature_code || '';
+  if(/^(PPLC|PPLA|PPLA2|PPLA3|PPLA4|PPLG)$/.test(fc)) return true;
+  if(sameName(r.name, r.admin2) || sameName(r.name, r.admin1)) return true;
+  return fc === 'PPL' && (r.population || 0) >= 1000;   // 일반 거주지도 일정 인구 이상이면 도시로 취급
 }
 function isGuRec(r){
   return GU_RE.test(r.name || '') && (/^(PPLA2|PPLA3)$/.test(r.feature_code || '') || sameName(r.name, r.admin2) || sameName(r.name, r.admin3));
 }
-function buildItems(list){
+function buildItems(list, q){
   const lv = settings.level, out = [], seen = new Set();
   const mk = (r, nameKey, areaKeys) => Object.assign({}, r, {
     nameKey, areaKeys, label: r[nameKey],
@@ -862,15 +929,19 @@ function buildItems(list){
     return out.slice(0, settings.max);
   }
   const sorted = list.slice().sort(byPop);
-  sorted.forEach(r => { if(isCityRec(r)) add(mk(r, 'name', ['admin1'])); });
+  // 검색어와 이름이 정확히 같은 지역은 범위 설정과 상관없이 항상 포함
+  const exact = r => !!q && sameName(r.name, q);
+  sorted.forEach(r => { if(isCityRec(r) || exact(r)) add(mk(r, 'name', ['admin1'])); });
   if(lv === 'district'){
     sorted.forEach(r => {
-      if(isCityRec(r)) return;
+      if(isCityRec(r) || exact(r)) return;
       if(isGuRec(r)) add(mk(r, 'name', ['admin2','admin1']));
       else if(GU_RE.test(r.admin2 || '')) add(mk(r, 'admin2', ['admin1']));       // 서울 등: 동 → 소속 구
       else if(GU_RE.test(r.admin3 || '')) add(mk(r, 'admin3', ['admin2','admin1'])); // 청주시 서원구 등
     });
   }
+  // 필터 때문에 하나도 안 남으면 전체 결과를 대신 보여줍니다 (있는 지역이 "없다"고 나오지 않도록)
+  if(!out.length) sorted.forEach(r => add(mk(r, 'name', ['admin2','admin1'])));
   return out.slice(0, settings.max);
 }
 function countryName(cc, fallback){
@@ -903,21 +974,48 @@ async function doSearch(v){
   try{
     const lang = activeLang();
     const count = settings.level === 'all' ? Math.max(settings.max, 10) : 100;
+    const nomP = nomSearch(v, lang, 10).catch(() => []);   // Open-Meteo가 놓치는 도시·번역 보완용
     const lists = await Promise.all(searchVariants(v).map((q,qi) =>
       fetch('https://geocoding-api.open-meteo.com/v1/search?name='+encodeURIComponent(q)+'&count='+(qi === 0 ? count : 20)+'&language='+lang)
         .then(r => r.ok ? r.json() : {}).then(j => j.results || []).catch(() => [])));
+    const nomRaw = await nomP;
     if($('q').value.trim() !== v) return;   // 그 사이 입력이 바뀌었으면 무시
     const seenIds = new Set(), merged = [];
     lists.flat().forEach(r => { if(!seenIds.has(r.id)){ seenIds.add(r.id); merged.push(r); } });
-    const items = buildItems(merged);
+    const items = buildItems(merged, v);
+
+    // Nominatim 결과 정리 (범위 설정에 맞는 종류만)
+    const CITY_K = ['city','town','village','municipality'], DIST_K = ['city_district','borough','district'];
+    const nomItems = (Array.isArray(nomRaw) ? nomRaw : [])
+      .filter(r => r.category === 'place' || (r.category === 'boundary' && r.type === 'administrative'))
+      .map(nomToItem)
+      .filter(it => it.label && Number.isFinite(it.latitude) && Number.isFinite(it.longitude))
+      .filter(it => settings.level === 'all' || CITY_K.includes(it.kind) || (settings.level === 'district' && DIST_K.includes(it.kind)));
+    const near = (a, b, d) => Math.hypot(a.latitude - b.latitude, a.longitude - b.longitude) < d;
+    // 1) Open-Meteo 이름이 번역 안 됐으면 가까운 Nominatim 결과의 번역 이름으로 교체
+    items.forEach(it => {
+      const bad = untranslated(it.label, lang), areaBad = it.area.some(p => untranslated(p, lang));
+      if(!bad && !areaBad) return;
+      const m = nomItems.find(n => near(n, it, .3) && (!bad || !untranslated(n.label, lang)));
+      if(!m) return;
+      if(bad) it.label = m.label;
+      if(areaBad && m.area.length && !m.area.some(p => untranslated(p, lang))) it.area = m.area;
+    });
+    // 2) Open-Meteo에 없는 도시는 Nominatim 결과로 채움
+    nomItems.forEach(n => {
+      if(items.length >= settings.max) return;
+      if(items.some(it => near(n, it, .15) || (sameName(it.label, n.label) && near(n, it, .5)))) return;
+      items.push(n);
+    });
     if(!items.length){ box.innerHTML = `<div>${escapeHtml(L().noResult)}</div>`; box.style.display='block'; return; }
     box.innerHTML = items.map((r,i)=>
       `<div data-i="${i}">${escapeHtml(r.label)} <small>${escapeHtml([...r.area, countryName(r.country_code, r.country)].filter(Boolean).join(', '))}</small></div>`).join('');
     box.style.display='block';
     box.querySelectorAll('div').forEach(el=>{
-      el.addEventListener('click',()=>{
+      el.addEventListener('click', async ()=>{
         const r = items[+el.dataset.i]; if(!r) return;
         box.style.display='none'; $('q').value='';
+        if(!r.timezone){ setStatus(L().loading); r.timezone = await tzFor(r.latitude, r.longitude); }   // Nominatim 결과는 시간대가 없어서 조회
         loadLocation({ lat:r.latitude, lon:r.longitude, name:r.label, admin:r.area.join(', '), country:r.country_code||'', tz:r.timezone||browserTz(),
                        id:r.id, nameLang:lang, nameKey:r.nameKey, areaKeys:r.areaKeys }, {save:true});
       });
