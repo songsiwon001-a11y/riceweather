@@ -735,7 +735,7 @@ function nomToItem(r){
   const nm = r.name || a.city || a.town || a.village || a.municipality || a.city_district || a.suburb || a.county || first;
   const st = a.state || a.province || a.region || '';
   return {
-    label: nm, nameKey:'name', areaKeys:['admin1'], area: uniq([st].filter(v => v && v !== nm)),
+    label: nm, nameKey:'name', areaKeys:['admin1'], area: uniq([a.city_district, a.borough, a.county, a.city, st].filter(v => v && v !== nm)),
     latitude: +r.lat, longitude: +r.lon, country_code: (a.country_code || '').toUpperCase(), country: a.country || '',
     kind: r.addresstype || r.type || '', category: r.category || '', src:'nom'
   };
@@ -803,8 +803,7 @@ function savedLoc(){
 }
 async function loadLocation(loc, opts={}){
   state.loc = loc;
-  state.lang = langForCountry(loc.country);
-  applyStaticText();
+  applyStaticText();   // 자동 언어는 검색한 지역이 아니라 내 IP 기준(detectIpLang)으로 정해집니다
   setStatus(L().loading);
   setNote(opts.note || '');
   try{
@@ -863,7 +862,7 @@ async function locate(){
       try{
         const g1 = await reverseGeocode(lat, lon, 'en');
         const cc = g1.countryCode || '';
-        const language = state.manualLang || langForCountry(cc);
+        const language = activeLang();
         let g = g1;
         if(language !== 'en'){
           try{ g = await reverseGeocode(lat, lon, language); }catch(e){ console.warn('Localized reverse geocode failed', e); }
@@ -912,7 +911,7 @@ function isCityRec(r){
   return fc === 'PPL' && (r.population || 0) >= 1000;   // 일반 거주지도 일정 인구 이상이면 도시로 취급
 }
 function isGuRec(r){
-  return GU_RE.test(r.name || '') && (/^(PPLA2|PPLA3)$/.test(r.feature_code || '') || sameName(r.name, r.admin2) || sameName(r.name, r.admin3));
+  return GU_RE.test(r.name || '');
 }
 function buildItems(list, q){
   const lv = settings.level, out = [], seen = new Set();
@@ -951,7 +950,7 @@ function countryName(cc, fallback){
 /* Open-Meteo는 2글자 검색어는 이름이 정확히 같아야만 찾고(3글자 이상부터 유사 검색), 한·중·일 이름은 3글자여도 접미사가 빠지면 못 찾습니다.
    예) "서울"·"서울시" 0건 → "서울특별시"만 나옴. 그래서 언어별로 행정구역 접미사를 붙인 후보도 함께 검색해서 합칩니다. */
 const SUFFIX_SETS = [
-  { test:/[가-힣]/, strip:/(특별자치시|특별자치도|특별시|광역시|시|군|도)$/, add:['특별시','광역시','특별자치시','특별자치도','시','군','도'] },
+  { test:/[가-힣]/, strip:/(특별자치시|특별자치도|특별시|광역시|시|군|도|구|동|읍|면|리)$/, add:['구','동','시','군','읍','면','특별시','광역시','특별자치시','특별자치도','도','리'] },
   { test:/[぀-ヿ]/, strip:/(都|道|府|県|市|区|町|村|郡)$/, add:['都','道','府','県','市','区','町','郡'] },   // 일본어(가나 포함)
   { test:/[一-鿿]/, strip:/(特别行政区|自治区|省|市|县|縣|区|區|都|府|道|郡)$/, add:['市','省','县','區','区','都','府','道','縣','郡'] } // 한자(중국어·일본어)
 ];
@@ -967,7 +966,7 @@ function searchVariants(v){
   }
   const al = ALIASES[v.toLowerCase()];     // 2글자 영문 약칭(유사 검색 불가)
   if(al) out.push(al);
-  return uniq(out).slice(0, 12);
+  return uniq(out).slice(0, 16);
 }
 async function doSearch(v){
   const box = $('results');
@@ -985,12 +984,12 @@ async function doSearch(v){
     const items = buildItems(merged, v);
 
     // Nominatim 결과 정리 (범위 설정에 맞는 종류만)
-    const CITY_K = ['city','town','village','municipality'], DIST_K = ['city_district','borough','district'];
+    const CITY_K = ['city','town','village','municipality','county'], DIST_K = ['city_district','borough','district'];
     const nomItems = (Array.isArray(nomRaw) ? nomRaw : [])
-      .filter(r => r.category === 'place' || (r.category === 'boundary' && r.type === 'administrative'))
+      .filter(r => r.category === 'place' || r.category === 'boundary')
       .map(nomToItem)
       .filter(it => it.label && Number.isFinite(it.latitude) && Number.isFinite(it.longitude))
-      .filter(it => settings.level === 'all' || CITY_K.includes(it.kind) || (settings.level === 'district' && DIST_K.includes(it.kind)));
+      .filter(it => settings.level === 'all' || CITY_K.includes(it.kind) || (settings.level === 'district' && (DIST_K.includes(it.kind) || GU_RE.test(it.label))));
     const near = (a, b, d) => Math.hypot(a.latitude - b.latitude, a.longitude - b.longitude) < d;
     // 1) Open-Meteo 이름이 번역 안 됐으면 가까운 Nominatim 결과의 번역 이름으로 교체
     items.forEach(it => {
@@ -1002,11 +1001,15 @@ async function doSearch(v){
       if(areaBad && m.area.length && !m.area.some(p => untranslated(p, lang))) it.area = m.area;
     });
     // 2) Open-Meteo에 없는 도시는 Nominatim 결과로 채움
+    //    검색어와 이름이 같거나 검색어로 시작하는 결과(예: 구·동)는 목록이 꽉 차 있어도 맨 앞에 넣습니다.
+    const qn = v.toLowerCase();
     nomItems.forEach(n => {
-      if(items.length >= settings.max) return;
       if(items.some(it => near(n, it, .15) || (sameName(it.label, n.label) && near(n, it, .5)))) return;
-      items.push(n);
+      const hit = (n.label || '').toLowerCase().startsWith(qn);
+      if(hit) items.unshift(n);
+      else if(items.length < settings.max) items.push(n);
     });
+    if(items.length > settings.max + 3) items.length = settings.max + 3;
     if(!items.length){ box.innerHTML = `<div>${escapeHtml(L().noResult)}</div>`; box.style.display='block'; return; }
     box.innerHTML = items.map((r,i)=>
       `<div data-i="${i}">${escapeHtml(r.label)} <small>${escapeHtml([...r.area, countryName(r.country_code, r.country)].filter(Boolean).join(', '))}</small></div>`).join('');
@@ -1592,9 +1595,31 @@ $('langSel').addEventListener('change', e=>{
   if(!window.isSecureContext && location.protocol !== 'file:') {
     setNote(state.manualLang === 'en' ? 'Location access usually requires HTTPS or localhost.' : '정확한 위치 권한은 HTTPS 또는 localhost에서 더 잘 작동합니다.');
   }
+  /* 자동 언어: 내 IP의 국가 기준. 처음엔 저장된 값/브라우저 언어로 시작하고, IP 확인이 끝나면 바뀐 경우에만 갱신합니다. */
+  const ipcc = safeGet('weather_ipcc');
+  if(ipcc) state.lang = langForCountry(ipcc);
+  else { const nl = (navigator.language || '').slice(0,2).toLowerCase(); if(I18N[nl]) state.lang = nl; }
+  detectIpLang();
   const sl = savedLoc();
   if(sl) loadLocation(sl, {save:true}); else locate();
 })();
+async function detectIpLang(){
+  let cc = null;
+  try{
+    const res = await fetch('https://ipapi.co/json/', { cache:'no-store' });
+    if(res.ok){ const g = await res.json(); if(g.country_code) cc = String(g.country_code).toUpperCase(); }
+  }catch(e){ console.warn('IP language detection failed', e); }
+  if(!cc) return;
+  safeSet('weather_ipcc', cc);
+  const lang = langForCountry(cc);
+  if(lang === state.lang) return;
+  state.lang = lang;
+  if(state.manualLang) return;
+  applyStaticText();
+  if(state.data) render();
+  const cur = state.loc;
+  localizeLoc().then(()=>{ if(state.loc === cur && state.data) render(); });
+}
 </script>
 </body>
   </html>
